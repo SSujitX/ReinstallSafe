@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-from app.core.command_runner import CommandRunner
+from app.core.command_runner import CANCELLED_RETURN_CODE, CommandRunner
 from app.utils.file_utils import ensure_dir
 
 
@@ -15,7 +15,10 @@ def export_wifi_profiles(dest_dir: Path, on_line: Callable[[str], None], cancel_
     ensure_dir(dest_dir)
     on_line("Exporting Wi-Fi profiles (including saved passwords)...")
     runner = CommandRunner(on_line=on_line, cancel_event=cancel_event)
-    runner.run(["netsh", "wlan", "export", "profile", "key=clear", f"folder={dest_dir}"])
+    result = runner.run(["netsh", "wlan", "export", "profile", "key=clear", f"folder={dest_dir}"])
+    if result.return_code == CANCELLED_RETURN_CODE:
+        on_line("Wi-Fi export cancelled.")
+        return 0
 
     exported = len(list(dest_dir.glob("*.xml"))) if dest_dir.exists() else 0
     on_line(f"Exported {exported} Wi-Fi profile(s).")
@@ -31,8 +34,12 @@ def import_wifi_profiles(source_dir: Path, on_line: Callable[[str], None], cance
     imported = 0
     runner = CommandRunner(on_line=on_line, cancel_event=cancel_event)
     for xml_file in source_dir.glob("*.xml"):
+        if cancel_event is not None and cancel_event.is_set():
+            break
         on_line(f"Adding Wi-Fi profile: {xml_file.stem}")
         result = runner.run(["netsh", "wlan", "add", "profile", f"filename={xml_file}", "user=all"])
+        if result.return_code == CANCELLED_RETURN_CODE:
+            break
         if result.succeeded:
             imported += 1
     on_line(f"Restored {imported} Wi-Fi profile(s).")
