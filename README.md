@@ -305,6 +305,7 @@ ReinstallSafe_Backup_YYYY-MM-DD_HH-MM-SS/
 
 **ReinstallSafe** — back up before Windows setup. Restore when you're ready.
 
+<div align="center">
 
 ## Star History
 
@@ -317,3 +318,5 @@ ReinstallSafe_Backup_YYYY-MM-DD_HH-MM-SS/
 </a>
 
 <a href="https://visitorbadge.io/status?path=https%3A%2F%2Fgithub.com%2FSSujitX%2FReinstallSafe"><img src="https://api.visitorbadge.io/api/visitors?path=https%3A%2F%2Fgithub.com%2FSSujitX%2FReinstallSafe&countColor=%23263759" /></a>
+
+</div>
