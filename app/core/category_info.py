@@ -7,7 +7,7 @@ BACKUP_CATEGORY_DESCRIPTIONS: dict[str, str] = {
     "user_files": "Pick folders below — fully restorable",
     "custom_folders": "Your paths — restored to originals",
     "browsers": "Extensions OK; logins need sync",
-    "apps": "winget reinstall only — not all apps",
+    "apps": "Full inventory CSV + winget reinstall",
     "appdata": "Roaming only — not Local AppData",
     "drivers": "Needs Admin — best-effort export",
     "wifi": "Home Wi-Fi passwords — fully restorable",
