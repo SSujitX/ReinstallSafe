@@ -35,6 +35,7 @@ class BackupManifest:
     selected_user_folders: list[str] = field(default_factory=list)
     custom_folders: list[dict[str, str]] = field(default_factory=list)
     detected_browsers: list[str] = field(default_factory=list)
+    browser_profile_paths: dict[str, str] = field(default_factory=dict)
     installed_apps_count: int = 0
     drivers_exported: int = 0
     wifi_profiles_exported: int = 0
@@ -71,6 +72,7 @@ class BackupManifest:
             "selected_user_folders": self.selected_user_folders,
             "custom_folders": self.custom_folders,
             "detected_browsers": self.detected_browsers,
+            "browser_profile_paths": self.browser_profile_paths,
             "installed_apps_count": self.installed_apps_count,
             "drivers_exported": self.drivers_exported,
             "wifi_profiles_exported": self.wifi_profiles_exported,
@@ -87,8 +89,33 @@ class BackupManifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BackupManifest":
-        known_fields = {f for f in cls.__dataclass_fields__}
-        filtered = {k: v for k, v in data.items() if k in known_fields}
+        list_fields = {
+            "selected_items",
+            "selected_user_folders",
+            "detected_browsers",
+            "warnings",
+            "errors",
+        }
+        dict_fields = {"browser_profile_paths", "categories"}
+        filtered: dict[str, Any] = {}
+
+        for key, value in data.items():
+            if key not in cls.__dataclass_fields__:
+                continue
+            if key in list_fields:
+                filtered[key] = list(value) if isinstance(value, list) else []
+            elif key == "custom_folders":
+                filtered[key] = _coerce_custom_folders(value)
+            elif key in dict_fields:
+                filtered[key] = dict(value) if isinstance(value, dict) else {}
+            elif key in ("installed_apps_count", "drivers_exported", "wifi_profiles_exported", "copied_file_count"):
+                try:
+                    filtered[key] = int(value)
+                except (TypeError, ValueError):
+                    filtered[key] = 0
+            elif value is not None:
+                filtered[key] = value
+
         return cls(**filtered)
 
     @classmethod
@@ -96,6 +123,20 @@ class BackupManifest:
         manifest_path = backup_dir / MANIFEST_FILENAME
         data = read_json(manifest_path)
         return cls.from_dict(data)
+
+
+def _coerce_custom_folders(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        source = item.get("source_path")
+        backup_name = item.get("backup_name")
+        if source and backup_name:
+            rows.append({"source_path": str(source), "backup_name": str(backup_name)})
+    return rows
 
 
 def manifest_path_for(backup_dir: Path) -> Path:
