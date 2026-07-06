@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 from app.core.command_runner import CommandRunner
 from app.core.robocopy import run_robocopy
 from app.utils.file_utils import ensure_dir, safe_copy_file
 from app.utils.paths import appdata_roaming, documents_dir, user_home
+
+POWERSHELL_QUERY_TIMEOUT_SECONDS = 2 * 60
 
 # --------------------------------------------------------------------------- #
 # Printers
@@ -20,7 +22,7 @@ def detect_printers(on_line: Callable[[str], None] | None = None) -> list[str]:
     result = runner.run([
         "powershell", "-NoProfile", "-Command",
         "Get-Printer | Select-Object -ExpandProperty Name",
-    ])
+    ], timeout=POWERSHELL_QUERY_TIMEOUT_SECONDS)
     names = [line.strip() for line in result.output_lines if line.strip()]
     if not names and on_line:
         on_line("No printers detected (or PowerShell Get-Printer unavailable).")
@@ -49,7 +51,12 @@ def detect_game_save_dirs() -> dict[str, Path]:
     return {name: path for name, path in candidates.items() if path.exists()}
 
 
-def backup_game_saves(dest_dir: Path, on_line: Callable[[str], None], cancel_event: threading.Event | None = None) -> int:
+def backup_game_saves(
+    dest_dir: Path,
+    on_line: Callable[[str], None],
+    cancel_event: threading.Event | None = None,
+    exclude_dirs: Iterable[Path] | None = None,
+) -> int:
     detected = detect_game_save_dirs()
     if not detected:
         on_line("No common game save folders detected.")
@@ -58,8 +65,12 @@ def backup_game_saves(dest_dir: Path, on_line: Callable[[str], None], cancel_eve
     total_copied = 0
     for name, path in detected.items():
         on_line(f"Backing up game saves: {name}")
-        result = run_robocopy(path, dest_dir / name, on_line=on_line, cancel_event=cancel_event)
+        result = run_robocopy(path, dest_dir / name, on_line=on_line, cancel_event=cancel_event, exclude_dirs=exclude_dirs)
         total_copied += result.copied_files
+        if result.cancelled:
+            break
+        if not result.succeeded:
+            on_line(f"WARNING: {name} backup finished with robocopy code {result.return_code}; some files may be skipped.")
     on_line(f"Game saves backed up: {total_copied} file(s).")
     return total_copied
 
@@ -80,6 +91,8 @@ def restore_game_saves(source_dir: Path, on_line: Callable[[str], None], cancel_
         total_copied += result.copied_files
         if result.cancelled:
             break
+        if not result.succeeded:
+            on_line(f"WARNING: {folder.name} restore finished with robocopy code {result.return_code}; continuing.")
     on_line(f"Game saves restored: {total_copied} file(s).")
     return total_copied
 
@@ -107,15 +120,28 @@ def detect_outlook_data_files() -> list[Path]:
     return found
 
 
-def backup_email_profiles(dest_dir: Path, on_line: Callable[[str], None], cancel_event: threading.Event | None = None) -> int:
+def backup_email_profiles(
+    dest_dir: Path,
+    on_line: Callable[[str], None],
+    cancel_event: threading.Event | None = None,
+    exclude_dirs: Iterable[Path] | None = None,
+) -> int:
     ensure_dir(dest_dir)
     count = 0
 
     thunderbird = detect_thunderbird_profiles()
     if thunderbird:
         on_line("Backing up Thunderbird profile(s)...")
-        result = run_robocopy(thunderbird, dest_dir / "thunderbird", on_line=on_line, cancel_event=cancel_event)
+        result = run_robocopy(
+            thunderbird,
+            dest_dir / "thunderbird",
+            on_line=on_line,
+            cancel_event=cancel_event,
+            exclude_dirs=exclude_dirs,
+        )
         count += result.copied_files
+        if not result.cancelled and not result.succeeded:
+            on_line(f"WARNING: Thunderbird backup finished with robocopy code {result.return_code}; some files may be skipped.")
     else:
         on_line("Thunderbird not detected; skipping.")
 
@@ -150,6 +176,8 @@ def restore_email_profiles(source_dir: Path, on_line: Callable[[str], None], can
         if result.cancelled:
             on_line(f"Email data restored: {count} file(s).")
             return count
+        if not result.succeeded:
+            on_line(f"WARNING: Thunderbird restore finished with robocopy code {result.return_code}; continuing.")
 
     outlook_src = source_dir / "outlook"
     if outlook_src.exists() and not (cancel_event is not None and cancel_event.is_set()):
