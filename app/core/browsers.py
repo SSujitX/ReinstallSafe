@@ -200,10 +200,14 @@ def backup_browsers(
     on_subprogress: Callable[[float], None] | None = None,
     on_step_begin: Callable[[str], None] | None = None,
     on_step_complete: Callable[[], None] | None = None,
-) -> dict[str, int]:
-    """Copy each selected browser's profile folder. Returns key -> copied file count."""
+) -> tuple[dict[str, int], dict[str, str]]:
+    """Copy each selected browser's profile folder.
+
+    Returns (key -> copied file count, key -> backed-up source profile path).
+    """
     detected = detect_browsers()
     results: dict[str, int] = {}
+    profile_paths: dict[str, str] = {}
     exclude_args = []
     for name in CACHE_EXCLUDES:
         exclude_args += ["/XD", name]
@@ -230,6 +234,7 @@ def backup_browsers(
         if on_step_begin:
             on_step_begin(detail)
         on_line(detail)
+        profile_paths[key] = str(source.resolve())
         dest = destination_root / browser.key
         result = run_robocopy(
             source,
@@ -252,7 +257,17 @@ def backup_browsers(
         if on_step_complete:
             on_step_complete()
 
-    return results
+    return results, profile_paths
+
+
+def _restore_destination(browser: BrowserDefinition, profile_paths: dict[str, str] | None, key: str) -> Path:
+    saved = (profile_paths or {}).get(key, "").strip()
+    if saved:
+        saved_path = Path(saved)
+        if saved_path.parent.exists():
+            return saved_path
+    active = browser.active_profile_root()
+    return active if active is not None else browser.profile_root
 
 
 def restore_browsers(
@@ -260,25 +275,39 @@ def restore_browsers(
     backup_browsers_dir: Path,
     on_line: Callable[[str], None],
     cancel_event: threading.Event | None = None,
-) -> dict[str, int]:
-    """Restore each selected browser profile folder back to its original location."""
+    profile_paths: dict[str, str] | None = None,
+) -> tuple[dict[str, int], bool]:
+    """Restore browser profiles. Returns (key -> file count, cancelled)."""
     definitions = {b.key: b for b in _browser_definitions()}
     results: dict[str, int] = {}
+    cancelled = False
 
     for key in selected_keys:
+        if cancel_event is not None and cancel_event.is_set():
+            cancelled = True
+            break
+
         browser = definitions.get(key)
         source = backup_browsers_dir / key
         if not browser or not source.exists():
             on_line(f"Skipping {key}: no backed-up profile found.")
             continue
-        on_line(f"Restoring {browser.label} profile...")
-        result = run_robocopy(source, browser.profile_root, on_line=on_line, cancel_event=cancel_event)
+
+        destination = _restore_destination(browser, profile_paths, key)
+        on_line(f"Restoring {browser.label} profile to {destination}...")
+        result = run_robocopy(source, destination, on_line=on_line, cancel_event=cancel_event)
         results[key] = result.copied_files
+
+        if result.cancelled:
+            cancelled = True
+            break
+
         if result.succeeded:
             on_line(f"{browser.label}: {result.copied_files} files restored.")
         else:
             on_line(f"WARNING: {browser.label} restore finished with robocopy code {result.return_code}.")
-    return results
+
+    return results, cancelled
 
 
 BROWSER_WARNING = (
