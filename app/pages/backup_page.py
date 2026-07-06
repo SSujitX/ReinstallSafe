@@ -38,9 +38,15 @@ from app.workers.backup_worker import BackupWorker
 class BackupPage(QWidget):
     backup_completed = pyqtSignal(str)  # backup_dir path
 
-    def __init__(self, toast_callback: Callable[[str, str], None] | None = None, parent=None):
+    def __init__(
+        self,
+        toast_callback: Callable[[str, str], None] | None = None,
+        can_start_callback: Callable[[], bool] | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.toast_callback = toast_callback or (lambda *_: None)
+        self.can_start_callback = can_start_callback or (lambda: True)
         self.worker: BackupWorker | None = None
         self.last_backup_dir: Path | None = None
         self.category_cards: dict[str, SelectableCard] = {}
@@ -65,6 +71,9 @@ class BackupPage(QWidget):
         content_layout.addWidget(self._build_user_files_card())
         content_layout.addWidget(self._build_browsers_card())
         content_layout.addWidget(self._build_custom_folders_card())
+        self._sync_browser_panel_enabled(self.category_cards["browsers"].is_checked())
+        self._sync_user_files_panel_enabled(self.category_cards["user_files"].is_checked())
+        self._sync_custom_folders_panel_enabled(self.category_cards["custom_folders"].is_checked())
         content_layout.addStretch(1)
         scroll.setWidget(content)
         outer.addWidget(scroll, 1)
@@ -281,13 +290,16 @@ class BackupPage(QWidget):
     # ------------------------------------------------------------------ #
 
     def _sync_browser_panel_enabled(self, checked: bool) -> None:
-        self.browsers_card.setEnabled(checked)
+        if hasattr(self, "browsers_card"):
+            self.browsers_card.setEnabled(checked)
 
     def _sync_user_files_panel_enabled(self, checked: bool) -> None:
-        self.user_files_card.setEnabled(checked)
+        if hasattr(self, "user_files_card"):
+            self.user_files_card.setEnabled(checked)
 
     def _sync_custom_folders_panel_enabled(self, checked: bool) -> None:
-        self.custom_folders_card.setEnabled(checked)
+        if hasattr(self, "custom_folders_card"):
+            self.custom_folders_card.setEnabled(checked)
 
     def _select_all(self) -> None:
         for card in self.category_cards.values():
@@ -340,6 +352,14 @@ class BackupPage(QWidget):
     # ------------------------------------------------------------------ #
 
     def _start_backup(self, full: bool) -> None:
+        if not self.can_start_callback():
+            QMessageBox.warning(
+                self,
+                "Operation In Progress",
+                "Please wait for the current backup or restore to finish before starting another operation.",
+            )
+            return
+
         if full:
             self._select_all()
 
