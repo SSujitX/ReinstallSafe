@@ -21,6 +21,7 @@ _NEW_FILE_RE = re.compile(r"^\s*New File", re.IGNORECASE)
 
 # Robocopy exit codes 0-7 are "success" (bit flags for copied/extra/mismatch); 8+ = failure.
 ROBOCOPY_SUCCESS_MAX = 7
+ROBOCOPY_TIMEOUT_SECONDS = 12 * 60 * 60
 
 SubProgressCallback = Callable[[float], None]
 
@@ -44,6 +45,7 @@ def run_robocopy(
     extra_flags: list[str] | None = None,
     exclude_dirs: Iterable[Path] | None = None,
     on_subprogress: SubProgressCallback | None = None,
+    timeout: float | None = ROBOCOPY_TIMEOUT_SECONDS,
 ) -> RobocopyResult:
     """Copy ``source`` -> ``destination`` using robocopy with no system temp spillover."""
     if cancel_event is not None and cancel_event.is_set():
@@ -58,31 +60,38 @@ def run_robocopy(
         )
 
     destination.mkdir(parents=True, exist_ok=True)
+    source_count = count_files(source)
     before_count = count_files(destination)
     flags = list(BASE_ROBOCOPY_FLAGS) + _exclude_dir_flags(exclude_dirs) + (extra_flags or [])
     args = ["robocopy", str(source), str(destination), *flags]
 
     lines: list[str] = []
     files_seen = 0
+    progress_ticks = 0
 
     def _capture(line: str) -> None:
-        nonlocal files_seen
+        nonlocal files_seen, progress_ticks
         lines.append(line)
 
         if _NEW_FILE_RE.match(line):
             files_seen += 1
-            if on_subprogress and files_seen % 8 == 0:
-                on_subprogress(min(0.95, 1.0 - (120.0 / (files_seen + 120.0))))
+            progress_ticks += 1
+            if on_subprogress and progress_ticks % 8 == 0:
+                on_subprogress(min(0.95, 1.0 - (120.0 / (progress_ticks + 120.0))))
             return
 
         if is_verbose_robocopy_line(line):
             return
 
+        progress_ticks += 1
+        if on_subprogress and progress_ticks % 25 == 0:
+            on_subprogress(min(0.95, 1.0 - (120.0 / (progress_ticks + 120.0))))
+
         if on_line:
             on_line(line)
 
     runner = CommandRunner(on_line=_capture, cancel_event=cancel_event)
-    result = runner.run(args)
+    result = runner.run(args, timeout=timeout)
 
     cancelled = result.return_code == CANCELLED_RETURN_CODE or (
         cancel_event is not None and cancel_event.is_set()
@@ -90,8 +99,10 @@ def run_robocopy(
     after_count = count_files(destination)
     # Robocopy localizes summary labels, so filesystem delta is the stable
     # language-neutral count. Existing overwritten files may not increase it.
-    copied = max(0, after_count - before_count)
     succeeded = not cancelled and 0 <= result.return_code <= ROBOCOPY_SUCCESS_MAX
+    copied = max(0, after_count - before_count, files_seen if succeeded else 0)
+    if succeeded and copied == 0 and source_count:
+        copied = source_count
 
     if on_subprogress and not cancelled:
         on_subprogress(1.0)
