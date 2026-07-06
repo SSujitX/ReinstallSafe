@@ -70,12 +70,16 @@ def restore_game_saves(source_dir: Path, on_line: Callable[[str], None], cancel_
         return 0
     total_copied = 0
     for folder in source_dir.iterdir():
+        if cancel_event is not None and cancel_event.is_set():
+            break
         if not folder.is_dir():
             continue
         destination = user_home() / folder.name if folder.name == "Saved Games" else documents_dir() / folder.name
         on_line(f"Restoring game saves: {folder.name}")
         result = run_robocopy(folder, destination, on_line=on_line, cancel_event=cancel_event)
         total_copied += result.copied_files
+        if result.cancelled:
+            break
     on_line(f"Game saves restored: {total_copied} file(s).")
     return total_copied
 
@@ -143,12 +147,17 @@ def restore_email_profiles(source_dir: Path, on_line: Callable[[str], None], can
         dest = appdata_roaming() / "Thunderbird" / "Profiles"
         result = run_robocopy(thunderbird_src, dest, on_line=on_line, cancel_event=cancel_event)
         count += result.copied_files
+        if result.cancelled:
+            on_line(f"Email data restored: {count} file(s).")
+            return count
 
     outlook_src = source_dir / "outlook"
-    if outlook_src.exists():
+    if outlook_src.exists() and not (cancel_event is not None and cancel_event.is_set()):
         outlook_dest = ensure_dir(documents_dir() / "Outlook Files")
         on_line("Restoring Outlook PST/OST files...")
         for pst in outlook_src.glob("*.*"):
+            if cancel_event is not None and cancel_event.is_set():
+                break
             if safe_copy_file(pst, outlook_dest / pst.name):
                 count += 1
         on_line(f"Outlook files restored to: {outlook_dest}")
