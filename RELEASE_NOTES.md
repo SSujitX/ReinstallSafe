@@ -29,6 +29,29 @@ ReinstallSafe is a free Windows backup and restore assistant for **before and af
 - **📁 Custom Folders UI**: Duplicate paths (`C:\Foo` vs `C:\Foo\`) deduplicated in the picker
 - **📁 Backup Page UI**: Custom folders panel disabled on load when the category is unchecked (matches browsers/user files panels)
 
+### Reliability & safety (v1.0.0 audit)
+
+- **🔒 Custom folder traversal**: Tampered manifest `backup_name` values can no longer escape the custom-folder backup root
+- **📂 Restore category detection**: Restore page enables categories from manifest data, not empty pre-created backup folders
+- **🌐 Browser restore picker**: Choose which backed-up browser profiles to restore; empty browser selection blocked on backup
+- **⚠️ Partial failures visible**: AppData, fonts, games, and email robocopy failures mark categories partial and add manifest warnings
+- **⏱️ Robocopy timeout**: 12-hour default timeout; cancel/timeout kills the full process tree (`taskkill /T /F`)
+- **📊 Restore file counts**: Overwrite restores no longer report 0 copied files when destination count did not increase
+- **📁 Relative backup paths**: Relative destinations resolve under the user home directory, not the current working directory
+- **📶 Wi‑Fi export**: Quoted netsh paths; explicit `WIFI_PASSWORDS_ARE_CLEARTEXT.txt` warning in backup folder
+- **🖨️ Printer backup**: Respects cooperative cancel during PowerShell enumeration
+- **🔧 Driver export/import**: Partial pnputil output kept with warnings instead of whole-category fatal failure
+- **📋 Restore UI feedback**: Warning dialog when restore report has warnings; cancelled restore shows partial report path in a dialog
+- **📍 Backup path note**: Restore summary warns when selected folder differs from manifest `backup_path`
+- **📦 winget detection**: Broader localized failure detection; improved list parsing; 32-bit registry hive fallback
+- **🔤 Subprocess encoding**: Uses system preferred encoding instead of hard-coded OEM
+- **🔤 Font registry labels**: OTF/TTC fonts registered with correct OpenType / TrueType Collection labels
+- **📈 Robocopy progress**: Sub-progress advances on output activity, less dependent on English `"New File"` lines
+- **📝 Session log**: Backup writes `logs/backup_session_summary.txt`
+- **📜 Logs page**: In-memory log export list capped at 5000 lines (matches console block count)
+- **🪟 Platform guard**: App exits cleanly on non-Windows instead of crashing mid-import
+- **✅ Tests & CI**: 12 unit tests in `tests/`; GitHub Actions workflow on Windows
+
 ---
 
 ## ✨ New Features & Optimizations
@@ -89,6 +112,7 @@ ReinstallSafe is a free Windows backup and restore assistant for **before and af
 - **App icon**: `assets/icon.ico` (Vault Green backup arrow tile)
 - **PyInstaller build**: `uv run build.py` → `dist/ReinstallSafe.exe` with bundled theme and icon
 - **Honest category subtitles**: restore expectations shown on each card (extensions OK, logins need sync, etc.)
+- **GitHub Actions CI**: Windows workflow runs unit tests and compile check on push/PR
 
 ### 📚 Documentation
 
@@ -105,6 +129,9 @@ ReinstallSafe is a free Windows backup and restore assistant for **before and af
 - AppData backup is Roaming only — not `%LOCALAPPDATA%`
 - Printers: names only — no driver/port restore
 - Game saves: two standard folders — not Steam/Epic/Xbox launchers
+- Outlook OST files are backed up but often useless after a clean Windows install
+- Thunderbird restore merges into an existing profile folder rather than creating an isolated profile
+- Restore may finish with warnings (partial robocopy, driver, or winget failures) — check `logs/restore_report_*.txt`
 
 ---
 
