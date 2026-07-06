@@ -1,0 +1,138 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Run unit tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run python -m unittest discover -s tests -v
+
+      - name: Extract version from tag
+        id: get_version
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          echo "Version: $version"
+        shell: pwsh
+
+      - name: Get previous tag
+        id: get_previous_tag
+        run: |
+          git fetch --tags
+          $currentTag = "${{ github.ref_name }}"
+          $previousTag = git tag --sort=-version:refname | Where-Object { $_ -ne $currentTag } | Select-Object -First 1
+          if ($previousTag) {
+            echo "previous_tag=$previousTag" >> $env:GITHUB_OUTPUT
+            echo "Previous tag: $previousTag"
+          } else {
+            echo "previous_tag=" >> $env:GITHUB_OUTPUT
+            echo "No previous tag found"
+          }
+        shell: pwsh
+
+      - name: Build executable
+        run: uv run build.py
+
+      - name: Rename executable
+        id: rename
+        run: |
+          $version = "${{ steps.get_version.outputs.version }}"
+          $oldPath = "dist\ReinstallSafe.exe"
+          $newPath = "dist\ReinstallSafe v$version.exe"
+          if (-not (Test-Path $oldPath)) {
+            throw "Expected build output not found: $oldPath"
+          }
+          Move-Item -Path $oldPath -Destination $newPath
+          echo "artifact_name=ReinstallSafe v$version.exe" >> $env:GITHUB_OUTPUT
+          echo "Renamed to: ReinstallSafe v$version.exe"
+        shell: pwsh
+
+      - name: Extract release notes
+        id: get_release_notes
+        run: |
+          $version = "${{ steps.get_version.outputs.version }}"
+          $releaseNotesPath = "RELEASE_NOTES.md"
+          $previousTag = "${{ steps.get_previous_tag.outputs.previous_tag }}"
+          $repo = "${{ github.repository }}"
+          $refName = "${{ github.ref_name }}"
+
+          if (Test-Path $releaseNotesPath) {
+            $content = Get-Content $releaseNotesPath -Raw
+            $escapedVersion = [regex]::Escape($version)
+            $pattern = "# 🚀 ReinstallSafe v$escapedVersion.*?(?=# 🚀 ReinstallSafe v[\d\.]+|$)"
+            $match = [regex]::Match($content, $pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+
+            if ($match.Success) {
+              $releaseNotes = $match.Value.Trim()
+              $releaseNotes = $releaseNotes -replace "^# 🚀 ReinstallSafe v$escapedVersion[^\r\n]*[\r\n]*", ""
+            } else {
+              $releaseNotes = ($content -replace "^# 🚀 ReinstallSafe v[^\r\n]*[\r\n]*", "").Trim()
+            }
+
+            $releaseNotes = $releaseNotes.Trim()
+          } else {
+            $releaseNotes = "## ReinstallSafe`n`nSee README.md for usage and limitations."
+          }
+
+          if ($previousTag) {
+            $releaseNotes += "`n`n---`n`n**Full Changelog**: https://github.com/$repo/compare/$previousTag...$refName"
+          }
+
+          $delimiter = "EOF_RELEASE_NOTES_$(Get-Random)"
+          echo "release_notes<<$delimiter" >> $env:GITHUB_OUTPUT
+          echo $releaseNotes >> $env:GITHUB_OUTPUT
+          echo $delimiter >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Create or Update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ReinstallSafe ${{ github.ref_name }}
+          body: |
+            ${{ steps.get_release_notes.outputs.release_notes }}
+
+            ### 📥 Download
+            Download **ReinstallSafe v${{ steps.get_version.outputs.version }}.exe** below.
+
+            ### 💻 System Requirements
+            - Windows 10 / 11
+            - No Python required on the target PC
+            - Administrator rights recommended for drivers, registry, and some restores
+
+            ### 🚀 Usage
+            1. Download the executable
+            2. Run it before reinstalling Windows to create a backup
+            3. After a clean Windows install, run it again and choose **Restore**
+          draft: false
+          prerelease: false
+          files: dist/${{ steps.rename.outputs.artifact_name }}
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
