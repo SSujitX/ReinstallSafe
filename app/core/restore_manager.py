@@ -188,6 +188,8 @@ class RestoreManager:
 
         if key == "drivers":
             ok = drivers.import_drivers(sub, self.on_line, self.cancel_event)
+            if not ok:
+                report.warnings.append("Drivers restore finished with warnings; some drivers may not have installed.")
             return 1 if ok else 0
 
         if key == "wifi":
