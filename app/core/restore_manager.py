@@ -149,7 +149,11 @@ class RestoreManager:
 
         if key == "browsers":
             self.on_line(browsers.BROWSER_WARNING)
-            keys = options.browser_keys or manifest.detected_browsers
+            keys = options.browser_keys
+            if not keys:
+                report.skipped.append(key)
+                self.on_line("No browser profiles selected for restore; skipping.")
+                return 0
             counts, cancelled, failures = browsers.restore_browsers(
                 keys,
                 sub,
@@ -176,7 +180,8 @@ class RestoreManager:
                 self._write_failed_apps(backup_dir, failed)
             if self._cancelled():
                 raise RestoreCancelled()
-            return 0 if failed else 1
+            package_count = apps.count_winget_packages(winget_json)
+            return max(0, package_count - len(failed))
 
         if key == "appdata":
             return appdata.restore_appdata(sub, self.on_line, self.cancel_event)
