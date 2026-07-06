@@ -1,0 +1,14 @@
+[project]
+name = "reinstallsafe"
+version = "1.0.0"
+description = "Free Windows backup & restore assistant — save files, browser profiles, Wi-Fi, and settings before reinstalling Windows, then restore after a clean install."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pyqt6>=6.11.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.21.0",
+]
