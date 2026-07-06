@@ -34,7 +34,11 @@ def export_wifi_profiles(dest_dir: Path, on_line: Callable[[str], None], cancel_
     exported = len(list(dest_dir.glob("*.xml"))) if dest_dir.exists() else 0
     if not result.succeeded:
         if exported == 0:
-            on_line("No Wi-Fi profiles exported. This PC may not have Wi-Fi hardware or WLAN AutoConfig may be disabled.")
+            on_line(
+                f"WARNING: Wi-Fi export failed with netsh code {result.return_code}; "
+                "no profiles were exported. This can mean no Wi-Fi hardware, disabled WLAN AutoConfig, "
+                "or a netsh/permission problem."
+            )
             return 0
         on_line(f"WARNING: Wi-Fi export finished with netsh code {result.return_code}; exported {exported} profile(s).")
     on_line(f"Exported {exported} Wi-Fi profile(s).")
