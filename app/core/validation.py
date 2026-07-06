@@ -9,6 +9,19 @@ from app.core.manifest import BackupManifest
 from app.utils.file_utils import count_files, write_json
 from app.utils.paths import MANIFEST_FILENAME
 
+FILE_COUNT_CATEGORIES = {
+    "user_files",
+    "custom_folders",
+    "browsers",
+    "appdata",
+    "fonts",
+    "games",
+    "email",
+    "wifi",
+    "registry",
+    "windows_settings",
+}
+
 
 @dataclass
 class VerificationReport:
@@ -52,11 +65,15 @@ def verify_backup(backup_dir: Path) -> VerificationReport:
         return report
 
     if manifest.errors:
+        report.ok = False
         report.issues.append(f"Backup recorded {len(manifest.errors)} error(s) during creation.")
 
     for key, info in manifest.categories.items():
         if not info.get("selected"):
             continue
+        if not info.get("succeeded", True):
+            report.ok = False
+            report.issues.append(f"Category '{info.get('label', key)}' was recorded as failed or partial.")
         rel_path = info.get("relative_path") or key
         category_dir = backup_dir / rel_path
         if not category_dir.exists():
@@ -68,10 +85,13 @@ def verify_backup(backup_dir: Path) -> VerificationReport:
 
         actual_count = count_files(category_dir)
         expected = info.get("file_count", 0)
-        if actual_count == 0 and expected and expected > 0:
+        if key in FILE_COUNT_CATEGORIES and expected and actual_count != expected:
             report.ok = False
-            report.category_findings[key] = "EMPTY"
-            report.issues.append(f"Category '{info.get('label', key)}' has no files but expected data.")
+            state = "INCOMPLETE" if actual_count < expected else "MISMATCH"
+            report.category_findings[key] = f"{state} ({actual_count}/{expected} files)"
+            report.issues.append(
+                f"Category '{info.get('label', key)}' has {actual_count} file(s) but expected {expected}."
+            )
         else:
             report.category_findings[key] = f"OK ({actual_count} files)"
 
