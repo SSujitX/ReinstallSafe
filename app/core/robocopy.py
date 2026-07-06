@@ -72,20 +72,18 @@ def run_robocopy(
     def _capture(line: str) -> None:
         nonlocal files_seen, progress_ticks
         lines.append(line)
+        progress_ticks += 1
+        if on_subprogress and progress_ticks % 25 == 0:
+            on_subprogress(min(0.95, 1.0 - (120.0 / (progress_ticks + 120.0))))
 
         if _NEW_FILE_RE.match(line):
             files_seen += 1
-            progress_ticks += 1
             if on_subprogress and progress_ticks % 8 == 0:
                 on_subprogress(min(0.95, 1.0 - (120.0 / (progress_ticks + 120.0))))
             return
 
         if is_verbose_robocopy_line(line):
             return
-
-        progress_ticks += 1
-        if on_subprogress and progress_ticks % 25 == 0:
-            on_subprogress(min(0.95, 1.0 - (120.0 / (progress_ticks + 120.0))))
 
         if on_line:
             on_line(line)
