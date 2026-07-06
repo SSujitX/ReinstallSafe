@@ -87,7 +87,7 @@ ReinstallSafe organizes everything into a timestamped folder, e.g. `ReinstallSaf
 | **Windows settings** | Taskbar, mouse, keyboard, desktop personalization |
 | **Printers** | Printer name list (reference only) |
 | **Game saves** | `Saved Games` and `Documents\My Games` |
-| **Email** | Thunderbird profiles + Outlook PST files |
+| **Email** | Thunderbird profiles + Outlook PST/OST files |
 
 Every backup writes **`backup_manifest.json`** — a record of what was backed up, when, and from which PC. The Restore page reads this automatically.
 
@@ -99,7 +99,7 @@ Every backup writes **`backup_manifest.json`** — a record of what was backed u
 |----------|-------------------------|-------|
 | User files | ✅ Yes | Files return to standard Windows folders |
 | Custom folders | ✅ Yes | Restored to **original paths** |
-| Browser profiles | ✅ Yes | Install browser first, close it, then restore; use sync for passwords |
+| Browser profiles | ✅ Yes | Install browser first, close it, then restore; **pick which browsers** in the restore panel; use sync for passwords |
 | Wi‑Fi | ✅ Yes | Home networks usually work; corporate Wi‑Fi may need IT |
 | Fonts | ✅ Yes | User fonts re-registered |
 | Apps (winget) | ⚠️ Partial | winget auto-reinstall only; CSV lists all apps with install paths |
@@ -108,7 +108,7 @@ Every backup writes **`backup_manifest.json`** — a record of what was backed u
 | Registry | ✅ Yes | Full Restore / Custom only |
 | Windows settings | ✅ Yes | Personalization `.reg` files imported |
 | Game saves | ✅ Yes | Standard save locations |
-| Email | ⚠️ Partial | Thunderbird often works; re-add Outlook PST manually |
+| Email | ⚠️ Partial | Thunderbird merges into existing profile; Outlook PST re-add manually; OST often useless after reinstall |
 | Printers | ❌ No | Name list only — reinstall printers yourself |
 
 ---
@@ -175,8 +175,11 @@ Use Windows Settings → Recovery, installation media, or OEM recovery — Reins
    - **Safe Restore** — files, custom folders, browsers, Wi‑Fi, fonts (recommended first)
    - **Full Restore** — everything including AppData, drivers, registry
    - **Custom Restore** — pick exactly what you want
-5. Close browsers when prompted before browser restore.
-6. Reinstall remaining apps manually; use `apps/installed-programs.csv` as a checklist.
+5. If restoring browsers, **select which profiles** in the browser panel (only backed-up browsers are listed).
+6. Close browsers when prompted before browser restore.
+7. Reinstall remaining apps manually; use `apps/installed-programs.csv` as a checklist.
+
+If restore finishes with warnings or you cancel mid-run, open the report path shown in the dialog (`logs/restore_report_*.txt`).
 
 ---
 
@@ -210,7 +213,10 @@ ReinstallSafe is honest about what a **file-based backup tool** can and cannot d
 - **AppData is Roaming only** — many modern apps store data in `%LOCALAPPDATA%`, which is not fully backed up.
 - **Printers** — names saved, not drivers or ports.
 - **Game saves** — common folders only; Steam/Epic/Xbox cloud saves are not scanned.
+- **Outlook OST files** — backed up with PST but often cannot be reused after a clean Windows install.
+- **Thunderbird** — restore merges into an existing profile tree; back up the profile folder separately if you need isolation.
 - **Administrator recommended** — driver export/import and some registry operations work best elevated.
+- **Partial restore** — locked files, driver install failures, or winget errors may produce warnings; check the restore report in `logs/`.
 
 ReinstallSafe **never deletes your original files** during backup. Restore **merges/overwrites** matching paths — you confirm before risky operations.
 
@@ -246,6 +252,10 @@ Check `logs/failed-apps.txt` in your backup folder. Install those programs manua
 
 Recommended for drivers and some registry/AppData operations. The app warns at startup if not elevated but still runs other categories.
 
+### Does restore show warnings if something failed?
+
+Yes. If robocopy, drivers, or winget hit partial failures, the restore summary dialog lists warnings and points you to `logs/restore_report_*.txt`. Cancelled restores also save a partial report.
+
 ---
 
 ## Build from source
@@ -256,11 +266,12 @@ Recommended for drivers and some registry/AppData operations. The app warns at s
 | OS | Windows 10 / 11 |
 | Package manager | [uv](https://docs.astral.sh/uv/) (recommended) |
 
-**Tech stack (for developers):** PyQt6 UI, background workers, Windows tools (`robocopy`, `winget`, `pnputil`, `netsh`, `reg`), JSON manifest, PyInstaller for `.exe` builds.
+**Tech stack (for developers):** PyQt6 UI, background workers, Windows tools (`robocopy`, `winget`, `pnputil`, `netsh`, `reg`), JSON manifest, PyInstaller for `.exe` builds. Unit tests in `tests/`; CI via `.github/workflows/ci.yml` on Windows.
 
 ```powershell
 uv sync
 uv run main.py
+uv run python -m unittest discover -s tests -v
 uv run build.py   # → dist/ReinstallSafe.exe
 ```
 
@@ -287,6 +298,7 @@ ReinstallSafe/
 │   ├── workers/             # Background QThread jobs
 │   └── utils/
 ├── assets/icon.ico
+├── tests/                   # Unit tests (run in CI)
 └── backup_manifest.json     # Written inside each backup folder
 ```
 
