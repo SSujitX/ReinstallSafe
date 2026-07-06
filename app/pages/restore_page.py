@@ -367,12 +367,14 @@ class RestorePage(QWidget):
         self.worker.log_line.connect(self._on_log_line)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_ok.connect(self._on_restore_finished)
+        self.worker.cancelled.connect(self._on_restore_cancelled)
         self.worker.failed.connect(self._on_restore_failed)
         self.worker.start()
 
     def _cancel_restore(self) -> None:
-        if self.worker:
+        if self.worker and self.worker.isRunning():
             self.worker.cancel()
+            self.cancel_btn.setEnabled(False)
             self.task_label.setText("Cancelling...")
 
     def _set_running(self, running: bool) -> None:
@@ -394,6 +396,9 @@ class RestorePage(QWidget):
         self.task_label.setText(task)
 
     def _on_restore_finished(self, report) -> None:
+        if getattr(report, "cancelled", False):
+            self._on_restore_cancelled(report)
+            return
         self._set_running(False)
         self.progress_bar.setValue(100)
         self.task_label.setText("Restore complete.")
@@ -404,6 +409,13 @@ class RestorePage(QWidget):
             summary += f"\n⚠ {len(report.failed_apps)} app(s) failed to install (see failed-apps.txt)."
         self.toast_callback("Restore completed successfully.", "success")
         QMessageBox.information(self, "Restore Complete", summary)
+
+    def _on_restore_cancelled(self, report) -> None:
+        self._set_running(False)
+        self.progress_bar.setValue(0)
+        self.task_label.setText("Restore cancelled.")
+        LogBus.instance().warning("Restore cancelled by user.")
+        self.toast_callback("Restore was cancelled.", "warning")
 
     def _on_restore_failed(self, message: str) -> None:
         self._set_running(False)
