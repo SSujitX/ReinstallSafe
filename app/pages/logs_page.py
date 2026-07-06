@@ -26,6 +26,8 @@ LEVEL_COLORS = {
     "ERROR": "#982f2f",
 }
 
+MAX_LOG_LINES = 5000
+
 
 class LogsPage(QWidget):
     def __init__(self, parent=None):
@@ -74,6 +76,8 @@ class LogsPage(QWidget):
 
     def _append(self, level: str, text: str) -> None:
         self._all_lines.append(f"[{level}] {text}")
+        if len(self._all_lines) > MAX_LOG_LINES:
+            del self._all_lines[: len(self._all_lines) - MAX_LOG_LINES]
         color = LEVEL_COLORS.get(level, "#68645d")
         self.console.appendHtml(f'<span style="color:{color};">{_escape(text)}</span>')
         scrollbar = self.console.verticalScrollBar()
