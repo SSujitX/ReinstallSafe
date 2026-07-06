@@ -13,8 +13,9 @@ from app.core.exceptions import BackupCancelled
 from app.core.manifest import BackupManifest, CategoryResult
 from app.core.robocopy import run_robocopy
 from app.utils.backup_workspace import use_backup_workspace
-from app.utils.file_utils import ensure_dir, human_size
+from app.utils.file_utils import count_files, ensure_dir, human_size
 from app.utils.paths import (
+    BACKUP_FOLDER_PREFIX,
     SUBFOLDERS,
     drive_free_bytes,
     is_system_drive,
@@ -43,6 +44,19 @@ ALL_CATEGORIES: list[tuple[str, str]] = [
     ("games", "Game Saves"),
     ("email", "Email Profiles"),
 ]
+
+FILE_BACKUP_CATEGORIES = {
+    "user_files",
+    "custom_folders",
+    "browsers",
+    "appdata",
+    "fonts",
+    "games",
+    "email",
+    "wifi",
+    "registry",
+    "windows_settings",
+}
 
 
 @dataclass
@@ -152,6 +166,7 @@ class BackupManager:
                     raise
                 except Exception as exc:  # keep going; one category failing shouldn't kill the whole backup
                     self.manifest.add_error(f"{label} failed: {exc}")
+                    self._record_failed_category(key, label, backup_dir, str(exc))
                     self.on_line(f"ERROR: {label} failed: {exc}")
                     if self._progress:
                         self._progress.complete_step()
@@ -227,10 +242,14 @@ class BackupManager:
                     sub / name,
                     on_line=self.on_line,
                     cancel_event=self.cancel_event,
+                    exclude_dirs=_backup_excludes_for(path, backup_dir),
                     on_subprogress=_subprogress,
                 )
                 if rc.cancelled:
                     raise BackupCancelled(self._backup_dir)
+                if not rc.succeeded:
+                    result.succeeded = False
+                    self.manifest.add_error(f"{label}: {name} failed with robocopy code {rc.return_code}.")
                 copied += rc.copied_files
                 if progress:
                     progress.complete_step()
@@ -244,17 +263,23 @@ class BackupManager:
                     progress.complete_step()
                 result.file_count = 0
             else:
-                copied, entries = custom_folders.backup_custom_folders(
+                copied, entries, failures = custom_folders.backup_custom_folders(
                     options.custom_folders,
                     sub,
                     self.on_line,
                     self.cancel_event,
+                    exclude_dirs=[backup_dir],
+                    backup_root=backup_dir,
                     on_subprogress=_subprogress,
                     on_step_begin=lambda detail: progress.begin(detail) if progress else None,
                     on_step_complete=lambda: progress.complete_step() if progress else None,
                 )
                 if self._cancelled():
                     raise BackupCancelled(self._backup_dir)
+                if failures:
+                    result.succeeded = False
+                    for failure in failures:
+                        self.manifest.add_error(f"{label}: {failure}")
                 self.manifest.custom_folders = [entry.to_dict() for entry in entries]
                 result.file_count = copied
                 result.detail = ", ".join(entry.source_path for entry in entries)
@@ -263,17 +288,22 @@ class BackupManager:
             self.on_line(browsers.BROWSER_WARNING)
             detected = browsers.detect_browsers()
             self.manifest.detected_browsers = list(detected.keys())
-            counts, profile_paths = browsers.backup_browsers(
+            counts, profile_paths, failures = browsers.backup_browsers(
                 options.browser_keys or list(detected.keys()),
                 sub,
                 self.on_line,
                 self.cancel_event,
+                exclude_dirs=[backup_dir],
                 on_subprogress=_subprogress,
                 on_step_begin=lambda detail: progress.begin(detail) if progress else None,
                 on_step_complete=lambda: progress.complete_step() if progress else None,
             )
             if self._cancelled():
                 raise BackupCancelled(self._backup_dir)
+            if failures:
+                result.succeeded = False
+                for failure in failures:
+                    self.manifest.add_error(f"{label}: {failure}")
             self.manifest.browser_profile_paths = profile_paths
             result.file_count = sum(counts.values())
             result.detail = ", ".join(counts.keys())
@@ -284,7 +314,8 @@ class BackupManager:
             available = apps.winget_available()
             if available:
                 winget_export_log = _activity_logger("Exporting winget package list...", 0.02, 0.42)
-                apps.export_winget_apps(sub, winget_export_log, self.cancel_event)
+                if not apps.export_winget_apps(sub, winget_export_log, self.cancel_event):
+                    self.manifest.add_warning("winget export failed; automatic app reinstall may be unavailable.")
                 if self._cancelled():
                     raise BackupCancelled(self._backup_dir)
                 if progress:
@@ -299,7 +330,13 @@ class BackupManager:
                 raise BackupCancelled(self._backup_dir)
             if progress:
                 progress.set_sub_progress(0.78, "Scanning registry app entries...")
-            reg_count = apps.scan_registry_installed_programs(sub, _activity_logger("Scanning registry app entries...", 0.78, 0.17))
+            reg_count = apps.scan_registry_installed_programs(
+                sub,
+                _activity_logger("Scanning registry app entries...", 0.78, 0.17),
+                self.cancel_event,
+            )
+            if self._cancelled():
+                raise BackupCancelled(self._backup_dir)
             self.manifest.installed_apps_count = max(count, reg_count)
             result.file_count = self.manifest.installed_apps_count
             result.detail = "winget available" if available else "winget unavailable"
@@ -309,7 +346,12 @@ class BackupManager:
         elif key == "appdata":
             if progress:
                 progress.begin(f"Backing up: {label}")
-            result.file_count = appdata.backup_appdata(sub, self.on_line, self.cancel_event)
+            result.file_count = appdata.backup_appdata(
+                sub,
+                self.on_line,
+                self.cancel_event,
+                exclude_dirs=_backup_excludes_for(appdata.appdata_roaming(), backup_dir),
+            )
             if self._cancelled():
                 raise BackupCancelled(self._backup_dir)
             if progress:
@@ -340,7 +382,12 @@ class BackupManager:
         elif key == "fonts":
             if progress:
                 progress.begin(f"Backing up: {label}")
-            result.file_count = fonts.backup_fonts(sub, self.on_line, self.cancel_event)
+            result.file_count = fonts.backup_fonts(
+                sub,
+                self.on_line,
+                self.cancel_event,
+                exclude_dirs=_backup_excludes_for(fonts.user_fonts_dir(), backup_dir),
+            )
             if self._cancelled():
                 raise BackupCancelled(self._backup_dir)
             if progress:
@@ -378,7 +425,12 @@ class BackupManager:
         elif key == "games":
             if progress:
                 progress.begin(f"Backing up: {label}")
-            result.file_count = detectors.backup_game_saves(sub, self.on_line, self.cancel_event)
+            result.file_count = detectors.backup_game_saves(
+                sub,
+                self.on_line,
+                self.cancel_event,
+                exclude_dirs=[backup_dir],
+            )
             if self._cancelled():
                 raise BackupCancelled(self._backup_dir)
             if progress:
@@ -388,16 +440,66 @@ class BackupManager:
             if progress:
                 progress.begin(f"Backing up: {label}")
             self.on_line("Note: Outlook/Thunderbird must be closed for a consistent copy.")
-            result.file_count = detectors.backup_email_profiles(sub, self.on_line, self.cancel_event)
+            result.file_count = detectors.backup_email_profiles(
+                sub,
+                self.on_line,
+                self.cancel_event,
+                exclude_dirs=[backup_dir],
+            )
             if self._cancelled():
                 raise BackupCancelled(self._backup_dir)
             if progress:
                 progress.complete_step()
 
-        result.succeeded = True
+        if not result.succeeded:
+            self.on_line(f"WARNING: Finished {label} with errors.")
+        if key in FILE_BACKUP_CATEGORIES:
+            result.file_count = count_files(sub)
         self.manifest.set_category(result)
         self.on_line(f"Finished: {label} ({result.file_count} item(s)).")
 
     def _write_session_log(self, backup_dir: Path) -> None:
         # Placeholder hook: the Logs page/worker persists the full live log separately.
         pass
+
+    def _record_failed_category(self, key: str, label: str, backup_dir: Path, detail: str) -> None:
+        sub = backup_dir / SUBFOLDERS.get(key, key)
+        result = CategoryResult(
+            key=key,
+            label=label,
+            selected=True,
+            succeeded=False,
+            file_count=count_files(sub) if key in FILE_BACKUP_CATEGORIES else 0,
+            detail=detail,
+            relative_path=SUBFOLDERS.get(key, key),
+        )
+        self.manifest.set_category(result)
+
+
+def _backup_excludes_for(source: Path, backup_dir: Path) -> list[Path]:
+    try:
+        source_resolved = source.resolve()
+        backup_resolved = backup_dir.resolve()
+    except OSError:
+        return []
+    backup_parent = backup_resolved.parent
+    candidates = [backup_resolved]
+    if backup_parent.exists():
+        candidates.extend(
+            path.resolve()
+            for path in backup_parent.glob(f"{BACKUP_FOLDER_PREFIX}_*")
+            if path.is_dir()
+        )
+    excludes: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            candidate_resolved = candidate.resolve()
+        except OSError:
+            candidate_resolved = candidate
+        if candidate_resolved == source_resolved or source_resolved in candidate_resolved.parents:
+            key = str(candidate_resolved).casefold()
+            if key not in seen:
+                seen.add(key)
+                excludes.append(candidate_resolved)
+    return excludes
