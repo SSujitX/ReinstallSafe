@@ -297,9 +297,9 @@ Recent major work in this repo:
 11. **TEMP redirect** — `backup_workspace.py` keeps working files inside backup folder.
 12. **README** — SEO user-facing docs; `AGENT.md` for developers/agents.
 13. **Software inventory CSV** — registry + AppX scan, install paths, links, `RestoreMethod` column.
-14. **Restore audit fixes** — `BackupManifest.load()` restored; post-category cancel checks; browser path fallback on new Windows user; winget CSV accuracy; restore cancel UI signal.
+14. **Restore audit fixes** — `BackupManifest.load()` restored; post-category cancel checks; browser path fallback on new Windows user; winget CSV accuracy; restore cancel UI signal; CommandRunner cancel watcher; close-window prompt during active jobs.
 
-**Not bug-free:** no automated test suite. Remaining known gaps: printers backup-only; long registry/AppX scan ignores cancel during apps backup; winget name matching is exact only; browser passwords may still fail after clean install (DPAPI).
+**Not bug-free:** no automated test suite. Remaining known gaps: printers backup-only; long registry/AppX scan ignores cancel during apps backup (pre-scan only); winget name matching is exact only; browser passwords may still fail after clean install (DPAPI).
 
 ---
 
