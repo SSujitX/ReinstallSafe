@@ -50,6 +50,7 @@ class RestorePage(QWidget):
         self.backup_dir: Path | None = None
         self.manifest: BackupManifest | None = None
         self.category_cards: dict[str, SelectableCard] = {}
+        self.browser_checks: dict[str, SelectableCard] = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(32, 26, 32, 22)
@@ -66,6 +67,7 @@ class RestorePage(QWidget):
         content_layout.setSpacing(14)
         content_layout.addWidget(self._build_summary_card())
         content_layout.addWidget(self._build_categories_card())
+        content_layout.addWidget(self._build_browsers_card())
         content_layout.addStretch(1)
         scroll.setWidget(content)
         outer.addWidget(scroll, 1)
@@ -74,6 +76,7 @@ class RestorePage(QWidget):
         outer.addWidget(self._build_progress_card())
 
         self._set_categories_enabled(False)
+        self._sync_browser_panel_enabled(False)
 
     # ------------------------------------------------------------------ #
     # UI builders
@@ -142,7 +145,28 @@ class RestorePage(QWidget):
             self.category_cards[key] = card_widget
             grid.addWidget(card_widget, index // columns, index % columns)
         layout.addLayout(grid)
+        self.category_cards["browsers"].toggled.connect(self._sync_browser_panel_enabled)
         self.categories_card = card
+        return card
+
+    def _build_browsers_card(self) -> QWidget:
+        card = glass_card()
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+        layout.addWidget(section_title("Browser Profiles to Restore"))
+        layout.addWidget(hint_label("Choose which backed-up browser profiles to restore."))
+
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        for index, (key, label) in enumerate(browsers_core.browser_options()):
+            box = SelectableCard(key, label, "Not in selected backup")
+            box.set_checked(False)
+            box.setEnabled(False)
+            self.browser_checks[key] = box
+            grid.addWidget(box, index // 3, index % 3)
+        layout.addLayout(grid)
+        self.browsers_card = card
         return card
 
     def _build_actions_row(self) -> QHBoxLayout:
@@ -233,6 +257,7 @@ class RestorePage(QWidget):
         self.folder_edit.setText(str(path))
         self._render_summary(manifest)
         self._sync_available_categories(manifest)
+        self._sync_available_browsers(manifest)
         self._set_categories_enabled(True)
         if notify:
             self.toast_callback("Backup folder loaded.", "success")
@@ -260,11 +285,40 @@ class RestorePage(QWidget):
         self.summary_label.setText(text.strip())
 
     def _sync_available_categories(self, manifest: BackupManifest) -> None:
-        available = set(manifest.categories.keys()) or set(manifest.selected_items)
+        available = {
+            key
+            for key, info in manifest.categories.items()
+            if isinstance(info, dict) and info.get("selected", True)
+        } or set(manifest.selected_items)
         for key, card in self.category_cards.items():
-            has_data = key in available or (self.backup_dir and (self.backup_dir / SUBFOLDERS.get(key, key)).exists())
+            has_data = key in available
             card.setEnabled(bool(has_data))
             card.set_checked(bool(has_data) and key in SAFE_DEFAULT_CATEGORIES)
+        self._sync_browser_panel_enabled(
+            self.category_cards["browsers"].isEnabled() and self.category_cards["browsers"].is_checked()
+        )
+
+    def _sync_available_browsers(self, manifest: BackupManifest) -> None:
+        backed_up = set(manifest.browser_profile_paths.keys()) or set(manifest.detected_browsers)
+        if self.backup_dir:
+            browsers_dir = self.backup_dir / SUBFOLDERS.get("browsers", "browsers")
+            if browsers_dir.exists():
+                backed_up.update(path.name for path in browsers_dir.iterdir() if path.is_dir())
+        for key, box in self.browser_checks.items():
+            has_data = key in backed_up
+            box.description.setText("Backed up" if has_data else "Not in selected backup")
+            box.setEnabled(has_data and self.category_cards["browsers"].isEnabled())
+            box.set_checked(has_data and self.category_cards["browsers"].is_checked())
+
+    def _sync_browser_panel_enabled(self, checked: bool) -> None:
+        if not hasattr(self, "browsers_card"):
+            return
+        enabled = checked and self.category_cards.get("browsers") is not None and self.category_cards["browsers"].isEnabled()
+        self.browsers_card.setEnabled(enabled)
+        for box in self.browser_checks.values():
+            has_data = box.description.text() == "Backed up"
+            box.setEnabled(enabled and has_data)
+            box.set_checked(enabled and has_data)
 
     def _set_categories_enabled(self, enabled: bool) -> None:
         self.categories_card.setEnabled(enabled)
@@ -288,6 +342,9 @@ class RestorePage(QWidget):
     def _selected_categories(self) -> set[str]:
         return {key for key, card in self.category_cards.items() if card.isEnabled() and card.is_checked()}
 
+    def _selected_browsers(self) -> list[str]:
+        return [key for key, box in self.browser_checks.items() if box.isEnabled() and box.is_checked()]
+
     # ------------------------------------------------------------------ #
     # Restore execution
     # ------------------------------------------------------------------ #
@@ -308,12 +365,23 @@ class RestorePage(QWidget):
         if mode == "safe":
             for key, card in self.category_cards.items():
                 card.set_checked(card.isEnabled() and key in SAFE_DEFAULT_CATEGORIES)
+            self._sync_browser_panel_enabled(self.category_cards["browsers"].is_checked())
         elif mode == "full":
             self._select_all()
+            self._sync_browser_panel_enabled(self.category_cards["browsers"].is_checked())
 
         selected = self._selected_categories()
         if not selected:
             QMessageBox.warning(self, "Nothing Selected", "Please select at least one category to restore.")
+            return
+
+        if "browsers" in selected and not self._selected_browsers():
+            QMessageBox.warning(
+                self,
+                "No Browsers Selected",
+                "Browser Profiles is checked, but no backed-up browser profiles are selected.\n\n"
+                "Pick at least one browser profile, or uncheck Browser Profiles.",
+            )
             return
 
         risky_selected = selected & RISKY_CATEGORIES
@@ -372,7 +440,7 @@ class RestorePage(QWidget):
             backup_dir=self.backup_dir,
             mode=mode,  # type: ignore[arg-type]
             selected_categories=selected,
-            browser_keys=self.manifest.detected_browsers,
+            browser_keys=self._selected_browsers(),
         )
 
         self.mini_console.clear()
@@ -428,14 +496,22 @@ class RestorePage(QWidget):
         summary = f"Restore complete ({report.mode} mode).\n\nReport saved to:\n{report.report_path}\n"
         if report.failed_apps:
             summary += f"\n⚠ {len(report.failed_apps)} app(s) failed to install (see failed-apps.txt)."
-        self.toast_callback("Restore completed successfully.", "success")
-        QMessageBox.information(self, "Restore Complete", summary)
+        if report.warnings:
+            summary += f"\n\nWarnings recorded: {len(report.warnings)}. Please review the restore report."
+            self.task_label.setText("Restore finished with warnings.")
+            self.toast_callback("Restore finished with warnings. See report.", "warning")
+            QMessageBox.warning(self, "Restore Finished With Warnings", summary)
+        else:
+            self.toast_callback("Restore completed successfully.", "success")
+            QMessageBox.information(self, "Restore Complete", summary)
 
     def _on_restore_cancelled(self, report) -> None:
         self._set_running(False)
         self.progress_bar.setValue(0)
         self.task_label.setText("Restore cancelled.")
         LogBus.instance().warning("Restore cancelled by user.")
+        if getattr(report, "report_path", ""):
+            self.mini_console.appendPlainText(f"Partial restore report: {report.report_path}")
         self.toast_callback("Restore was cancelled.", "warning")
 
     def _on_restore_failed(self, message: str) -> None:
