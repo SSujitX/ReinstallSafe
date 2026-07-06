@@ -1,3 +1,27 @@
+# Changelog
+
+All notable changes to [ReinstallSafe](https://github.com/SSujitX/ReinstallSafe) are documented in this file.
+
+## [Unreleased]
+
+### Added
+
+- **Full software inventory CSV** — registry (all uninstall hives) + Microsoft Store/UWP apps; columns include install directory, website links, uninstall command, and `RestoreMethod` (`winget auto-reinstall`, `manual reinstall`, etc.).
+
+### Fixed
+
+- **Manifest load (critical)** — `BackupManifest.load()` was accidentally nested inside a helper and unreachable; restore, verify, and restore-page manifest preview were broken.
+- **Browser restore path** — saves actual backed-up profile path in `browser_profile_paths` manifest field; restore uses saved path when parent exists, otherwise falls back to current install (fixes Opera/Tor Roaming vs Local mismatch and new Windows user paths).
+- **Restore cancel** — cancelled restores no longer show “Restore complete”; `RestoreWorker` emits `cancelled` signal; robocopy cancel and post-category cancel checks stop restore reliably.
+- **Backup page UI** — custom folders panel disabled on load when category is unchecked (matches browsers/user files panels).
+- **winget CSV accuracy** — only marks `winget auto-reinstall` when package is in winget export JSON (no false fuzzy matches).
+- **winget import failures** — tighter failure detection; ignores “0 failed” / “no errors” lines.
+- **Manifest loading** — null/malformed list fields coerced safely; numeric strings parsed.
+- **Backup progress** — user-file steps skipped when folder missing still advance progress bar.
+- **Custom folders** — duplicate paths (`C:\Foo` vs `C:\Foo\`) deduplicated in UI.
+
+---
+
 ## [1.0.0] - 2026-07-07
 
 First public release. Windows backup and restore assistant for use **before and after** reinstalling Windows.
@@ -91,3 +115,11 @@ First public release. Windows backup and restore assistant for use **before and 
 - AppData backup is Roaming only — not `%LOCALAPPDATA%`.
 - Printers: names only — no driver/port restore.
 - Game saves: two standard folders — not Steam/Epic/Xbox launchers.
+
+---
+
+## Links
+
+- [Repository](https://github.com/SSujitX/ReinstallSafe)
+- [Unreleased changes](https://github.com/SSujitX/ReinstallSafe/compare/v1.0.0...HEAD)
+- [1.0.0](https://github.com/SSujitX/ReinstallSafe/releases/tag/v1.0.0)
