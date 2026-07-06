@@ -129,7 +129,7 @@ Category labels and honest UI notes live in **`app/core/category_info.py`**.
 | `AGENT.md` | This file — LLM/onboarding guide. |
 | `RELEASE_NOTES.md` | v1.0.0 release notes (features, fixes, limitations). |
 | `tests/test_core.py` | Unit tests for core logic (paths, custom folders, winget, Wi‑Fi, drivers, UI helpers). |
-| `.github/workflows/ci.yml` | Windows GitHub Actions: unittest + compileall. |
+| `.github/workflows/release.yml` | Tag-triggered release: unit tests, PyInstaller build, GitHub Release upload. |
 
 ### `assets/`
 
@@ -306,7 +306,7 @@ Recent major work in this repo:
 13. **Software inventory CSV** — registry + AppX scan, install paths, links, `RestoreMethod` column.
 14. **Restore audit fixes** — `BackupManifest.load()` restored; post-category cancel checks; browser path fallback on new Windows user; winget CSV accuracy; restore cancel UI signal; CommandRunner cancel watcher; close-window prompt during active jobs.
 15. **Reliability hardening (v1.0.0 audit)** — custom-folder `backup_name` traversal blocked; restore categories from manifest (not empty folders); browser picker on restore + empty browser backup blocked; partial robocopy/driver failures surfaced in manifest/report; robocopy 12h timeout + process-tree kill; overwrite restore counts fixed; relative backup paths under user home; Wi‑Fi cleartext warning file; restore UI shows warnings and cancelled partial report dialog; manifest backup-path mismatch note; localized winget failure detection; 32-bit registry fallback; printer backup respects cancel.
-16. **Tests & CI** — `tests/test_core.py` (12 unit tests); `.github/workflows/ci.yml` runs tests + `compileall` on `windows-latest`.
+16. **Tests & release CI** — `tests/test_core.py` (12 unit tests); `.github/workflows/release.yml` runs tests + build on version tags.
 
 **Not bug-free:** remaining known gaps are mostly product limits (see README). Minor edges: winget failure heuristics may false-positive; winget list table parsing is improved but not locale-proof; no GUI/integration tests; browser passwords may still fail after clean install (DPAPI).
 
@@ -347,7 +347,7 @@ Recent major work in this repo:
 uv sync
 uv run main.py
 
-# Unit tests (also run in GitHub Actions CI)
+# Unit tests (also run before release builds on version tags)
 uv run python -m unittest discover -s tests -v
 
 # Regenerate icon
