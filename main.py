@@ -16,6 +16,9 @@ from app.utils.paths import app_icon_path
 
 
 def main() -> int:
+    if sys.platform != "win32":
+        raise SystemExit("ReinstallSafe is a Windows-only backup/restore tool.")
+
     app = QApplication(sys.argv)
     app.setApplicationName("ReinstallSafe")
     app.setOrganizationName("ReinstallSafe")
