@@ -13,6 +13,7 @@ class RestoreWorker(QThread):
     log_line = pyqtSignal(str)
     progress = pyqtSignal(int, str)
     finished_ok = pyqtSignal(object)  # RestoreReport
+    cancelled = pyqtSignal(object)  # RestoreReport
     failed = pyqtSignal(str)
 
     def __init__(self, options: RestoreOptions, parent=None):
@@ -31,6 +32,9 @@ class RestoreWorker(QThread):
                 cancel_event=self.cancel_event,
             )
             report = manager.run(self.options)
-            self.finished_ok.emit(report)
+            if report.cancelled:
+                self.cancelled.emit(report)
+            else:
+                self.finished_ok.emit(report)
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))
