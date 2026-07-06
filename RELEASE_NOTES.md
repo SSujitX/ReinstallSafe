@@ -112,7 +112,7 @@ ReinstallSafe is a free Windows backup and restore assistant for **before and af
 - **App icon**: `assets/icon.ico` (Vault Green backup arrow tile)
 - **PyInstaller build**: `uv run build.py` → `dist/ReinstallSafe.exe` with bundled theme and icon
 - **Honest category subtitles**: restore expectations shown on each card (extensions OK, logins need sync, etc.)
-- **GitHub Actions CI**: Windows workflow runs unit tests and compile check on push/PR
+- **GitHub Actions release**: Windows workflow runs unit tests, builds the exe, and publishes on version tags
 
 ### 📚 Documentation
 
