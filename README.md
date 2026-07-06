@@ -266,7 +266,7 @@ Yes. If robocopy, drivers, or winget hit partial failures, the restore summary d
 | OS | Windows 10 / 11 |
 | Package manager | [uv](https://docs.astral.sh/uv/) (recommended) |
 
-**Tech stack (for developers):** PyQt6 UI, background workers, Windows tools (`robocopy`, `winget`, `pnputil`, `netsh`, `reg`), JSON manifest, PyInstaller for `.exe` builds. Unit tests in `tests/`; CI via `.github/workflows/ci.yml` on Windows.
+**Tech stack (for developers):** PyQt6 UI, background workers, Windows tools (`robocopy`, `winget`, `pnputil`, `netsh`, `reg`), JSON manifest, PyInstaller for `.exe` builds. Unit tests in `tests/`; release workflow runs tests when you push a `v*` tag.
 
 ```powershell
 uv sync
@@ -298,7 +298,7 @@ ReinstallSafe/
 │   ├── workers/             # Background QThread jobs
 │   └── utils/
 ├── assets/icon.ico
-├── tests/                   # Unit tests (run in CI)
+├── tests/                   # Unit tests (run before release builds)
 └── backup_manifest.json     # Written inside each backup folder
 ```
 
