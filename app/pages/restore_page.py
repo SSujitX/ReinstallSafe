@@ -371,6 +371,13 @@ class RestorePage(QWidget):
         self.worker.failed.connect(self._on_restore_failed)
         self.worker.start()
 
+    def cancel_if_running(self, wait_ms: int = 15000) -> bool:
+        """Cooperatively cancel an in-progress restore. Returns True when idle."""
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            return self.worker.wait(wait_ms)
+        return True
+
     def _cancel_restore(self) -> None:
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
