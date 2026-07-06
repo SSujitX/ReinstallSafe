@@ -137,6 +137,9 @@ class BackupPage(QWidget):
         self.category_cards["browsers"].toggled.connect(self._sync_browser_panel_enabled)
         self.category_cards["user_files"].toggled.connect(self._sync_user_files_panel_enabled)
         self.category_cards["custom_folders"].toggled.connect(self._sync_custom_folders_panel_enabled)
+        self._sync_browser_panel_enabled(self.category_cards["browsers"].is_checked())
+        self._sync_user_files_panel_enabled(self.category_cards["user_files"].is_checked())
+        self._sync_custom_folders_panel_enabled(self.category_cards["custom_folders"].is_checked())
         return card
 
     def _build_user_files_card(self) -> QWidget:
@@ -309,9 +312,13 @@ class BackupPage(QWidget):
 
     def _add_custom_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Add Custom Folder")
-        if folder and Path(folder) not in self.custom_folders:
-            self.custom_folders.append(Path(folder))
-            self.custom_folder_list.addItem(QListWidgetItem(folder))
+        if not folder:
+            return
+        resolved = Path(folder).resolve()
+        if resolved in {path.resolve() for path in self.custom_folders}:
+            return
+        self.custom_folders.append(resolved)
+        self.custom_folder_list.addItem(QListWidgetItem(str(resolved)))
 
     def _remove_custom_folder(self) -> None:
         row = self.custom_folder_list.currentRow()
