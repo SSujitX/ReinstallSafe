@@ -92,7 +92,6 @@ class SelectableCard(QWidget):
         self.frame = QFrame()
         self.frame.setObjectName("SelectCard")
         self.frame.setProperty("checked", "false")
-        self.frame.setGraphicsEffect(soft_shadow(blur=14, y_offset=2, alpha=16))
 
         layout = QHBoxLayout(self.frame)
         layout.setContentsMargins(12, 10, 12, 10)
@@ -107,11 +106,11 @@ class SelectableCard(QWidget):
         title_label.setProperty("role", "card-title")
         title_label.setWordWrap(True)
         text_layout.addWidget(title_label)
+        self.description = QLabel(description)
+        self.description.setProperty("role", "card-desc")
+        self.description.setWordWrap(True)
         if description:
-            desc_label = QLabel(description)
-            desc_label.setProperty("role", "card-desc")
-            desc_label.setWordWrap(True)
-            text_layout.addWidget(desc_label)
+            text_layout.addWidget(self.description)
         layout.addLayout(text_layout, 1)
 
         outer = QVBoxLayout(self)
