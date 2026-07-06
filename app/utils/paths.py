@@ -160,7 +160,7 @@ def normalize_backup_destination(text: str) -> Path:
         return path.resolve()
     if path.is_absolute():
         return path
-    return (Path.cwd() / path).resolve()
+    return (Path.home() / path).resolve()
 
 
 def is_system_drive(path: Path) -> bool:
