@@ -100,7 +100,10 @@ class RestoreManager:
             report.cancelled = True
             self.on_line("Restore cancelled by user.")
 
-        self.on_progress(100, "Writing restore report...")
+        if report.cancelled:
+            self.on_progress(99, "Restore cancelled.")
+        else:
+            self.on_progress(100, "Writing restore report...")
         report.report_path = self._write_report(options.backup_dir, report)
         return report
 
@@ -161,7 +164,9 @@ class RestoreManager:
             report.failed_apps.extend(failed)
             if failed:
                 self._write_failed_apps(backup_dir, failed)
-            return 1
+            if self._cancelled():
+                raise RestoreCancelled()
+            return 0 if failed else 1
 
         if key == "appdata":
             return appdata.restore_appdata(sub, self.on_line, self.cancel_event)
