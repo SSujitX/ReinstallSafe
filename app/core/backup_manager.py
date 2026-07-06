@@ -215,6 +215,8 @@ class BackupManager:
             for name, path in locations.items():
                 self._abort_if_cancelled()
                 if not path.exists():
+                    if progress:
+                        progress.complete_step()
                     continue
                 detail = f"Backing up {name}..."
                 if progress:
@@ -261,7 +263,7 @@ class BackupManager:
             self.on_line(browsers.BROWSER_WARNING)
             detected = browsers.detect_browsers()
             self.manifest.detected_browsers = list(detected.keys())
-            counts = browsers.backup_browsers(
+            counts, profile_paths = browsers.backup_browsers(
                 options.browser_keys or list(detected.keys()),
                 sub,
                 self.on_line,
@@ -272,6 +274,7 @@ class BackupManager:
             )
             if self._cancelled():
                 raise BackupCancelled(self._backup_dir)
+            self.manifest.browser_profile_paths = profile_paths
             result.file_count = sum(counts.values())
             result.detail = ", ".join(counts.keys())
 
