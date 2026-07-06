@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-from app.core.command_runner import CommandRunner
+from app.core.command_runner import CANCELLED_RETURN_CODE, CommandRunner
 from app.utils.file_utils import ensure_dir
 
 # Only user-scoped, low-risk keys. We deliberately avoid HKLM\SYSTEM, SAM, SECURITY, etc.
@@ -39,9 +39,13 @@ def _export_key_set(
     runner = CommandRunner(on_line=on_line, cancel_event=cancel_event)
     exported = 0
     for file_key, reg_path in keys.items():
+        if cancel_event is not None and cancel_event.is_set():
+            break
         target = dest_dir / f"{file_key}.reg"
         on_line(f"Exporting registry key: {reg_path}")
         result = runner.run(["reg", "export", reg_path, str(target), "/y"])
+        if result.return_code == CANCELLED_RETURN_CODE:
+            break
         if result.succeeded and target.exists():
             exported += 1
         else:
@@ -69,8 +73,12 @@ def import_registry_exports(source_dir: Path, on_line: Callable[[str], None], ca
     runner = CommandRunner(on_line=on_line, cancel_event=cancel_event)
     imported = 0
     for reg_file in source_dir.glob("*.reg"):
+        if cancel_event is not None and cancel_event.is_set():
+            break
         on_line(f"Importing registry file: {reg_file.name}")
         result = runner.run(["reg", "import", str(reg_file)])
+        if result.return_code == CANCELLED_RETURN_CODE:
+            break
         if result.succeeded:
             imported += 1
         else:
