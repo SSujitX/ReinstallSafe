@@ -403,6 +403,14 @@ class BackupPage(QWidget):
             return
 
         if "browsers" in selected:
+            if not self._selected_browsers():
+                QMessageBox.warning(
+                    self,
+                    "No Browsers Selected",
+                    "Browser Profiles is checked, but no browsers are selected.\n\n"
+                    "Pick at least one browser profile below, or uncheck Browser Profiles.",
+                )
+                return
             answer = QMessageBox.question(
                 self,
                 "Close Your Browsers",
