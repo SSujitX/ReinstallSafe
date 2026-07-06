@@ -22,7 +22,7 @@ def backup_appdata(
     on_line: Callable[[str], None],
     cancel_event: threading.Event | None = None,
     exclude_dirs: Iterable[Path] | None = None,
-) -> int:
+) -> tuple[int, list[str]]:
     source = appdata_roaming()
     on_line("Backing up AppData\\Roaming (application settings)...")
     exclude_args = []
@@ -36,10 +36,13 @@ def backup_appdata(
         extra_flags=exclude_args,
         exclude_dirs=exclude_dirs,
     )
+    warnings: list[str] = []
     if not result.cancelled and not result.succeeded:
-        on_line(f"WARNING: AppData backup finished with robocopy code {result.return_code}; some locked files may be skipped.")
+        warning = f"AppData backup finished with robocopy code {result.return_code}; some locked files may be skipped."
+        warnings.append(warning)
+        on_line(f"WARNING: {warning}")
     on_line(f"AppData settings backed up: {result.copied_files} file(s).")
-    return result.copied_files
+    return result.copied_files, warnings
 
 
 def restore_appdata(source_dir: Path, on_line: Callable[[str], None], cancel_event: threading.Event | None = None) -> int:
