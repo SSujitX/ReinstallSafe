@@ -9,6 +9,8 @@ from typing import Callable
 from app.core.command_runner import CANCELLED_RETURN_CODE, CommandRunner
 from app.utils.file_utils import ensure_dir
 
+REG_TIMEOUT_SECONDS = 2 * 60
+
 # Only user-scoped, low-risk keys. We deliberately avoid HKLM\SYSTEM, SAM, SECURITY, etc.
 SAFE_REGISTRY_KEYS: dict[str, str] = {
     "explorer-settings": r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer",
@@ -43,7 +45,7 @@ def _export_key_set(
             break
         target = dest_dir / f"{file_key}.reg"
         on_line(f"Exporting registry key: {reg_path}")
-        result = runner.run(["reg", "export", reg_path, str(target), "/y"])
+        result = runner.run(["reg", "export", reg_path, str(target), "/y"], timeout=REG_TIMEOUT_SECONDS)
         if result.return_code == CANCELLED_RETURN_CODE:
             break
         if result.succeeded and target.exists():
@@ -64,7 +66,12 @@ def export_windows_settings(dest_dir: Path, on_line: Callable[[str], None], canc
     return _export_key_set(WINDOWS_SETTINGS_KEYS, dest_dir, on_line, cancel_event)
 
 
-def import_registry_exports(source_dir: Path, on_line: Callable[[str], None], cancel_event: threading.Event | None = None) -> int:
+def import_registry_exports(
+    source_dir: Path,
+    on_line: Callable[[str], None],
+    cancel_event: threading.Event | None = None,
+    allowed_stems: set[str] | None = None,
+) -> int:
     """Import previously exported .reg files. Caller must confirm with the user first."""
     if not source_dir.exists():
         on_line("No registry backup folder found; skipping.")
@@ -72,21 +79,29 @@ def import_registry_exports(source_dir: Path, on_line: Callable[[str], None], ca
 
     runner = CommandRunner(on_line=on_line, cancel_event=cancel_event)
     imported = 0
+    failures: list[str] = []
+    allowed = allowed_stems or (set(SAFE_REGISTRY_KEYS) | set(WINDOWS_SETTINGS_KEYS))
     for reg_file in source_dir.glob("*.reg"):
         if cancel_event is not None and cancel_event.is_set():
             break
+        if reg_file.stem not in allowed:
+            on_line(f"Skipping unexpected registry file: {reg_file.name}")
+            continue
         on_line(f"Importing registry file: {reg_file.name}")
-        result = runner.run(["reg", "import", str(reg_file)])
+        result = runner.run(["reg", "import", str(reg_file)], timeout=REG_TIMEOUT_SECONDS)
         if result.return_code == CANCELLED_RETURN_CODE:
             break
         if result.succeeded:
             imported += 1
         else:
+            failures.append(reg_file.name)
             on_line(f"WARNING: failed to import {reg_file.name}.")
     on_line(f"Imported {imported} registry file(s).")
+    if failures:
+        raise RuntimeError(f"Failed to import registry file(s): {', '.join(failures)}")
     return imported
 
 
 def import_windows_settings(source_dir: Path, on_line: Callable[[str], None], cancel_event: threading.Event | None = None) -> int:
     """Import personalization .reg files from the windows_settings backup folder."""
-    return import_registry_exports(source_dir, on_line, cancel_event)
+    return import_registry_exports(source_dir, on_line, cancel_event, allowed_stems=set(WINDOWS_SETTINGS_KEYS))
