@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import winreg
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 from app.core.robocopy import run_robocopy
 from app.utils.paths import appdata_local
@@ -17,13 +17,20 @@ def user_fonts_dir() -> Path:
     return appdata_local() / "Microsoft" / "Windows" / "Fonts"
 
 
-def backup_fonts(dest_dir: Path, on_line: Callable[[str], None], cancel_event: threading.Event | None = None) -> int:
+def backup_fonts(
+    dest_dir: Path,
+    on_line: Callable[[str], None],
+    cancel_event: threading.Event | None = None,
+    exclude_dirs: Iterable[Path] | None = None,
+) -> int:
     source = user_fonts_dir()
     if not source.exists():
         on_line("No user-installed fonts folder found; skipping.")
         return 0
     on_line("Backing up user-installed fonts...")
-    result = run_robocopy(source, dest_dir, on_line=on_line, cancel_event=cancel_event)
+    result = run_robocopy(source, dest_dir, on_line=on_line, cancel_event=cancel_event, exclude_dirs=exclude_dirs)
+    if not result.cancelled and not result.succeeded:
+        on_line(f"WARNING: Fonts backup finished with robocopy code {result.return_code}; some files may be skipped.")
     on_line(f"Fonts backed up: {result.copied_files} file(s).")
     return result.copied_files
 
@@ -36,6 +43,8 @@ def restore_fonts(source_dir: Path, on_line: Callable[[str], None], cancel_event
     dest = user_fonts_dir()
     on_line("Restoring fonts...")
     result = run_robocopy(source_dir, dest, on_line=on_line, cancel_event=cancel_event)
+    if not result.cancelled and not result.succeeded:
+        on_line(f"WARNING: Fonts restore finished with robocopy code {result.return_code}; some files may be skipped.")
 
     registered = 0
     try:
