@@ -15,7 +15,9 @@ It is **not** a full disk imaging tool. It copies files and exports Windows tool
 
 **Target users:** people wiping `C:` who need Documents, browsers, Wi‑Fi, apps list, etc. on an external drive.
 
-**Honest limits:** browser passwords/cookies often fail after clean install (DPAPI); winget only reinstalls a subset of apps; printers are name-list only.
+**Honest limits:** browser passwords/cookies often fail after clean install (DPAPI); winget only reinstalls a subset of apps; printers are name-list only; Outlook OST files may be useless after reinstall; Thunderbird restore merges into an existing profile tree.
+
+**Platform guard:** `main.py` exits immediately on non-Windows (`sys.platform != "win32"`).
 
 ---
 
@@ -118,13 +120,16 @@ Category labels and honest UI notes live in **`app/core/category_info.py`**.
 
 | File | Purpose |
 |------|---------|
-| `main.py` | Entry point: `QApplication`, load `theme.qss`, set icon via `app_icon_path()`, show `MainWindow`. |
+| `main.py` | Entry point: Windows-only guard, `QApplication`, load `theme.qss`, set icon via `app_icon_path()`, show `MainWindow`. |
 | `build.py` | PyInstaller onefile build. Bundles `theme.qss` + `assets/icon.ico` (`--icon` + `--add-data`). Output: `dist/ReinstallSafe.exe`. |
 | `_make_icon.py` | Generates `assets/icon.ico` (Vault Green tile + backup arrow). Run: `uv run _make_icon.py`. |
 | `pyproject.toml` | Project metadata, `pyqt6` dep, dev `pyinstaller`. |
 | `requirements.txt` | Pip-compatible deps list. |
 | `README.md` | User-facing docs (SEO, workflow, FAQ). |
 | `AGENT.md` | This file — LLM/onboarding guide. |
+| `RELEASE_NOTES.md` | v1.0.0 release notes (features, fixes, limitations). |
+| `tests/test_antigravity_fixes.py` | Unit tests for audit fixes (paths, custom folders, winget, Wi‑Fi, drivers, UI helpers). |
+| `.github/workflows/ci.yml` | Windows GitHub Actions: unittest + compileall. |
 
 ### `assets/`
 
@@ -148,8 +153,8 @@ Category labels and honest UI notes live in **`app/core/category_info.py`**.
 | File | Purpose |
 |------|---------|
 | `backup_page.py` | Destination picker, 14 category cards, user-folder checkboxes, 65+ browser checkboxes, custom folder list, progress + mini console. Builds `BackupOptions`, runs `BackupWorker`. Preflight dialogs (close browsers, category notes). |
-| `restore_page.py` | Pick backup folder, manifest summary, 12 restore category cards. Safe/Full/Custom restore. Preflight: close browsers/email, `category_info` notes, overwrite confirm. Runs `RestoreWorker`. |
-| `logs_page.py` | Live log viewer backed by `LogBus` (rotating file + in-memory). |
+| `restore_page.py` | Pick backup folder, manifest summary, 12 restore category cards **enabled from manifest data** (not empty pre-created folders). Browser picker on restore. Shows backup-path mismatch note, warning dialogs when `report.warnings` exist, and cancelled-restore dialog with partial report path. Safe/Full/Custom restore. Runs `RestoreWorker`. |
+| `logs_page.py` | Live log viewer backed by `LogBus` (rotating file + in-memory `_all_lines` capped at 5000). |
 | `settings_page.py` | Default backup destination (`QSettings`), diagnostics (admin/winget/robocopy), about/disclaimers. Browse auto-saves. Signal: `default_destination_changed`. |
 
 ### `app/workers/` — background threads
@@ -167,15 +172,15 @@ Category labels and honest UI notes live in **`app/core/category_info.py`**.
 | `restore_manager.py` | **Restore orchestrator.** `RESTORE_CATEGORIES`, `RISKY_CATEGORIES`, `RestoreOptions`, `RestoreReport`, `RestoreManager.run()`. |
 | `manifest.py` | `BackupManifest` + `CategoryResult`. Fields: `selected_user_folders`, `custom_folders`, `detected_browsers`, `browser_profile_paths`, counts, warnings/errors. `from_dict()` coerces null/malformed JSON safely. `load(backup_dir)` reads `backup_manifest.json`. |
 | `category_info.py` | UI copy: backup/restore card subtitles, preflight warning text builders. Single source of honest expectations. |
-| `custom_folders.py` | Backup custom paths with `folder_map.json` + manifest entries. Restore to **original source paths**. Handles name collisions (`Projects_2`). |
+| `custom_folders.py` | Backup custom paths with `folder_map.json` + manifest entries. Restore to **original source paths** (including external drives). Blocks traversal via tampered `backup_name`, protected/system destinations, and active backup folders. Handles name collisions (`Projects_2`). |
 | `browsers.py` | 65+ browsers. Backup saves `browser_profile_paths` in manifest. Restore uses saved path when parent exists, else `active_profile_root()` / `profile_root`. |
-| `robocopy.py` | Wrapper around Windows `robocopy`. Flags: `/E /MT:32 /R:1 /W:1 /XJ`. Exit codes 0–7 = success. Supports cancel + sub-progress callbacks. |
-| `command_runner.py` | Generic subprocess runner with live stdout lines + cancel. Used by reg, pnputil, netsh, winget. |
+| `robocopy.py` | Wrapper around Windows `robocopy`. Flags: `/E /MT:32 /R:1 /W:1 /XJ`. Exit codes 0–7 = success. **12-hour default timeout.** File counts use filesystem delta (locale-neutral); overwrite restores fall back to source count. Sub-progress advances on output ticks (not English `"New File"` only). Supports cancel + sub-progress callbacks. |
+| `command_runner.py` | Generic subprocess runner with live stdout lines, **system preferred encoding** (`locale.getpreferredencoding`), optional timeout, and cancel. On cancel/timeout kills process tree via `taskkill /T /F`. Used by reg, pnputil, netsh, winget. |
 | `apps.py` | `winget export/import`, full `installed-programs.csv` (registry + AppX, install dir, links, RestoreMethod), `apps-list.txt`. |
 | `appdata.py` | Backup/restore `%APPDATA%` Roaming only (excludes Temp, caches). |
-| `drivers.py` | `pnputil /export-driver` and `/add-driver … /install`. |
-| `wifi.py` | `netsh wlan export profile key=clear` and `netsh wlan add profile`. |
-| `fonts.py` | User fonts folder robocopy + HKCU registry registration on restore. |
+| `drivers.py` | `pnputil /export-driver` and `/add-driver … /install`. Partial export kept on nonzero exit; restore warns instead of claiming full success. |
+| `wifi.py` | `netsh wlan export profile key=clear` (quoted paths) and `netsh wlan add profile`. Writes `WIFI_PASSWORDS_ARE_CLEARTEXT.txt` warning. Distinguishes netsh failure from “no profiles”. |
+| `fonts.py` | User fonts folder robocopy + HKCU registry registration on restore (TrueType / OpenType / TrueType Collection labels by extension). |
 | `registry.py` | Export/import safe HKCU keys + `WINDOWS_SETTINGS_KEYS` for personalization. `import_windows_settings()` aliases registry import. |
 | `detectors.py` | Printers list (PowerShell), game saves (2 folders), email (Thunderbird + Outlook PST/OST). |
 | `validation.py` | `verify_backup()` — manifest vs on-disk folders, writes `logs/verify_report.json`. |
@@ -185,7 +190,7 @@ Category labels and honest UI notes live in **`app/core/category_info.py`**.
 
 | File | Purpose |
 |------|---------|
-| `paths.py` | **Central path logic.** `SUBFOLDERS`, `user_files_locations()`, `user_file_options()`, `resolve_user_file_locations()`, `normalize_backup_destination()` (fixes `D:` → `D:\`), `is_system_drive()`, `bundle_root()`, `app_icon_path()`, `timestamped_backup_name()`. |
+| `paths.py` | **Central path logic.** `SUBFOLDERS`, `user_files_locations()`, `user_file_options()`, `resolve_user_file_locations()`, `normalize_backup_destination()` (fixes `D:` → `D:\`; **relative paths resolve under user home**, not CWD), `is_system_drive()`, `bundle_root()`, `app_icon_path()`, `timestamped_backup_name()`. |
 | `backup_workspace.py` | Context manager: redirects `TEMP`/`TMP` into `<backup>/.workspace/tmp` so C: temp doesn't fill during backup. |
 | `file_utils.py` | `ensure_dir`, `read_json`/`write_json`, `human_size`, `count_files`, `safe_copy_file`, `which`. |
 | `logging_utils.py` | `LogBus` singleton — Qt signal + rotating log file under `%LOCALAPPDATA%/ReinstallSafe/logs`. |
@@ -203,7 +208,7 @@ Category labels and honest UI notes live in **`app/core/category_info.py`**.
 destination: Path
 selected_categories: set[str]
 custom_folders: list[Path]
-browser_keys: list[str]      # empty → all detected
+browser_keys: list[str]      # empty → blocked in UI (must pick at least one)
 user_file_keys: list[str]    # empty → all standard folders
 ```
 
@@ -213,7 +218,7 @@ user_file_keys: list[str]    # empty → all standard folders
 backup_dir: Path
 mode: "safe" | "full" | "custom"
 selected_categories: set[str]
-browser_keys: list[str]      # default → manifest.detected_browsers
+browser_keys: list[str]      # restore page browser picker; empty blocked when browsers category selected
 ```
 
 ### `BackupManifest` (`manifest.py`)
@@ -275,8 +280,10 @@ All subprocess output streams to UI via `on_line` callbacks.
 ## 10. Progress & cancel
 
 - **`ProgressTracker`** (`backup_manager.py`): discrete steps + robocopy sub-fraction per step → 0–100%.
-- **Cancel:** `threading.Event` passed to manager/modules. `BackupCancelled` raised; worker emits `cancelled` with partial backup path.
-- **Robocopy cancel:** checked between output lines; kills process if set.
+- **Cancel:** `threading.Event` passed to manager/modules. `BackupCancelled` / `RestoreCancelled` raised; workers emit `cancelled` with partial backup/report path.
+- **Robocopy cancel:** checked between output lines; `CommandRunner` kills full process tree (`taskkill /T /F`) on cancel or timeout.
+- **Partial failures:** AppData, fonts, games, email robocopy warnings propagate to manifest `warnings` and set category `succeeded=False` when robocopy exits with code ≥ 8.
+- **Session summary:** `_write_session_log()` writes `logs/backup_session_summary.txt` at end of backup.
 
 ---
 
@@ -298,8 +305,10 @@ Recent major work in this repo:
 12. **README** — SEO user-facing docs; `AGENT.md` for developers/agents.
 13. **Software inventory CSV** — registry + AppX scan, install paths, links, `RestoreMethod` column.
 14. **Restore audit fixes** — `BackupManifest.load()` restored; post-category cancel checks; browser path fallback on new Windows user; winget CSV accuracy; restore cancel UI signal; CommandRunner cancel watcher; close-window prompt during active jobs.
+15. **Reliability hardening (v1.0.0 audit)** — custom-folder `backup_name` traversal blocked; restore categories from manifest (not empty folders); browser picker on restore + empty browser backup blocked; partial robocopy/driver failures surfaced in manifest/report; robocopy 12h timeout + process-tree kill; overwrite restore counts fixed; relative backup paths under user home; Wi‑Fi cleartext warning file; restore UI shows warnings and cancelled partial report dialog; manifest backup-path mismatch note; localized winget failure detection; 32-bit registry fallback; printer backup respects cancel.
+16. **Tests & CI** — `tests/test_antigravity_fixes.py` (12 unit tests); `.github/workflows/ci.yml` runs tests + `compileall` on `windows-latest`.
 
-**Not bug-free:** no automated test suite. Remaining known gaps: printers backup-only; long registry/AppX scan ignores cancel during apps backup (pre-scan only); winget name matching is exact only; browser passwords may still fail after clean install (DPAPI).
+**Not bug-free:** remaining known gaps are mostly product limits (see README). Minor edges: winget failure heuristics may false-positive; winget list table parsing is improved but not locale-proof; no GUI/integration tests; browser passwords may still fail after clean install (DPAPI).
 
 ---
 
@@ -338,6 +347,9 @@ Recent major work in this repo:
 uv sync
 uv run main.py
 
+# Unit tests (also run in GitHub Actions CI)
+uv run python -m unittest discover -s tests -v
+
 # Regenerate icon
 uv run _make_icon.py
 
@@ -348,7 +360,7 @@ uv run build.py
 uv run python -c "from app.main_window import MainWindow"
 ```
 
-**Platform:** Windows only (relies on robocopy, reg, pnputil, netsh, QStandardPaths).
+**Platform:** Windows only (`main.py` guard + robocopy, reg, pnputil, netsh, QStandardPaths).
 
 **Admin:** optional but recommended for drivers/registry; warned at startup in `main_window.py`.
 
@@ -414,4 +426,4 @@ category_info.py ← used by pages for UI copy only
 
 ---
 
-*Last updated to match codebase state including custom folder restore, Windows settings restore, 65+ browsers, user folder picker, Settings→Backup sync, and Vault Green UI.*
+*Last updated for v1.0.0: audit hardening, unit tests, GitHub Actions CI, restore UI warnings, manifest-driven restore categories, and documented product limits.*
