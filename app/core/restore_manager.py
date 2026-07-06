@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from app.core import apps, appdata, browsers, custom_folders, detectors, drivers, fonts, registry, wifi
+from app.core.exceptions import RestoreCancelled
 from app.core.manifest import BackupManifest
 from app.core.robocopy import run_robocopy
 from app.utils.file_utils import ensure_dir
@@ -54,6 +55,7 @@ class RestoreReport:
     failed_apps: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     report_path: str = ""
+    cancelled: bool = False
 
 
 class RestoreManager:
@@ -64,6 +66,10 @@ class RestoreManager:
 
     def _cancelled(self) -> bool:
         return self.cancel_event is not None and self.cancel_event.is_set()
+
+    def _abort_if_cancelled(self) -> None:
+        if self._cancelled():
+            raise RestoreCancelled()
 
     def run(self, options: RestoreOptions) -> RestoreReport:
         manifest = BackupManifest.load(options.backup_dir)
@@ -76,18 +82,23 @@ class RestoreManager:
         steps = [c for c in RESTORE_CATEGORIES if c[0] in selected]
         total = max(len(steps), 1)
 
-        for index, (key, label) in enumerate(steps):
-            if self._cancelled():
-                self.on_line("Restore cancelled by user.")
-                break
-            percent = int((index / total) * 100)
-            self.on_progress(percent, f"Restoring: {label}")
-            try:
-                count = self._run_category(key, options, manifest, report)
-                report.restored[key] = count
-            except Exception as exc:
-                report.warnings.append(f"{label} failed: {exc}")
-                self.on_line(f"ERROR: {label} failed: {exc}")
+        try:
+            for index, (key, label) in enumerate(steps):
+                self._abort_if_cancelled()
+                percent = int((index / total) * 100)
+                self.on_progress(percent, f"Restoring: {label}")
+                try:
+                    count = self._run_category(key, options, manifest, report)
+                    report.restored[key] = count
+                    self._abort_if_cancelled()
+                except RestoreCancelled:
+                    raise
+                except Exception as exc:
+                    report.warnings.append(f"{label} failed: {exc}")
+                    self.on_line(f"ERROR: {label} failed: {exc}")
+        except RestoreCancelled:
+            report.cancelled = True
+            self.on_line("Restore cancelled by user.")
 
         self.on_progress(100, "Writing restore report...")
         report.report_path = self._write_report(options.backup_dir, report)
@@ -105,6 +116,7 @@ class RestoreManager:
             folders = manifest.selected_user_folders or list(user_files_locations().keys())
             catalog = user_files_locations()
             for name in folders:
+                self._abort_if_cancelled()
                 source = sub / name
                 if not source.exists():
                     continue
@@ -113,16 +125,29 @@ class RestoreManager:
                     continue
                 self.on_line(f"Restoring {name}...")
                 rc = run_robocopy(source, destination, on_line=self.on_line, cancel_event=self.cancel_event)
+                if rc.cancelled:
+                    raise RestoreCancelled()
                 copied += rc.copied_files
             return copied
 
         if key == "custom_folders":
-            return custom_folders.restore_custom_folders(backup_dir, manifest, self.on_line, self.cancel_event)
+            try:
+                return custom_folders.restore_custom_folders(backup_dir, manifest, self.on_line, self.cancel_event)
+            except RestoreCancelled:
+                raise
 
         if key == "browsers":
             self.on_line(browsers.BROWSER_WARNING)
             keys = options.browser_keys or manifest.detected_browsers
-            counts = browsers.restore_browsers(keys, sub, self.on_line, self.cancel_event)
+            counts, cancelled = browsers.restore_browsers(
+                keys,
+                sub,
+                self.on_line,
+                self.cancel_event,
+                profile_paths=manifest.browser_profile_paths,
+            )
+            if cancelled:
+                raise RestoreCancelled()
             return sum(counts.values())
 
         if key == "apps":
@@ -180,6 +205,7 @@ class RestoreManager:
         lines = [
             f"ReinstallSafe Restore Report",
             f"Mode: {report.mode}",
+            f"Cancelled: {report.cancelled}",
             f"Backup folder: {report.backup_dir}",
             f"Date: {datetime.now().isoformat(timespec='seconds')}",
             "",
