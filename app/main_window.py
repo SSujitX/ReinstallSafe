@@ -13,7 +13,7 @@ from app.pages.logs_page import LogsPage
 from app.pages.restore_page import RestorePage
 from app.pages.settings_page import SettingsPage
 from app.styles import load_stylesheet
-from app.utils.admin import is_admin
+from app.utils.admin import is_admin, relaunch_as_admin
 from app.utils.paths import app_icon_path
 from app.widgets import Toast
 
@@ -138,10 +138,15 @@ class MainWindow(QMainWindow):
             "ReinstallSafe is not running as Administrator.\n\n"
             "Some operations (driver export/import, some registry keys, and certain "
             "AppData folders) may fail or be incomplete without elevated permissions.\n\n"
-            "You can close the app and re-run it as Administrator for best results."
+            "Relaunch as Administrator for best results?"
         )
-        box.setStandardButtons(QMessageBox.StandardButton.Ok)
-        box.exec()
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        box.setDefaultButton(QMessageBox.StandardButton.Yes)
+        if box.exec() == QMessageBox.StandardButton.Yes:
+            if relaunch_as_admin():
+                self.close()
+            else:
+                QMessageBox.warning(self, "Relaunch Failed", "Could not start the elevated ReinstallSafe process.")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         running = self._operation_running()
