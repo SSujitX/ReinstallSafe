@@ -37,9 +37,15 @@ BROWSER_WARNING = browsers_core.BROWSER_WARNING
 
 
 class RestorePage(QWidget):
-    def __init__(self, toast_callback: Callable[[str, str], None] | None = None, parent=None):
+    def __init__(
+        self,
+        toast_callback: Callable[[str, str], None] | None = None,
+        can_start_callback: Callable[[], bool] | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.toast_callback = toast_callback or (lambda *_: None)
+        self.can_start_callback = can_start_callback or (lambda: True)
         self.worker: RestoreWorker | None = None
         self.backup_dir: Path | None = None
         self.manifest: BackupManifest | None = None
@@ -287,6 +293,14 @@ class RestorePage(QWidget):
     # ------------------------------------------------------------------ #
 
     def _start_restore(self, mode: str) -> None:
+        if not self.can_start_callback():
+            QMessageBox.warning(
+                self,
+                "Operation In Progress",
+                "Please wait for the current backup or restore to finish before starting another operation.",
+            )
+            return
+
         if not self.backup_dir or not self.manifest:
             QMessageBox.warning(self, "No Backup Selected", "Please select a backup folder first.")
             return
