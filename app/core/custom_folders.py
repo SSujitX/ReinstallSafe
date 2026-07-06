@@ -12,7 +12,7 @@ from app.core.manifest import BackupManifest
 from app.core.exceptions import RestoreCancelled
 from app.core.robocopy import run_robocopy
 from app.utils.file_utils import ensure_dir, read_json, write_json
-from app.utils.paths import BACKUP_FOLDER_PREFIX, user_home
+from app.utils.paths import BACKUP_FOLDER_PREFIX
 
 FOLDER_MAP_FILENAME = "folder_map.json"
 
@@ -158,21 +158,31 @@ def restore_custom_folders(
         if cancel_event is not None and cancel_event.is_set():
             raise RestoreCancelled()
 
-        source = custom_root / entry.backup_name
+        source = _safe_custom_backup_source(custom_root, entry.backup_name)
         destination = Path(entry.source_path)
+
+        if source is None:
+            message = f"Skipping unsafe custom backup mapping: {entry.backup_name}"
+            failures.append(message)
+            on_line(f"WARNING: {message}")
+            continue
 
         if not source.exists():
             on_line(f"Skipping {destination}: no backed-up data at '{entry.backup_name}'.")
             continue
 
-        if not _is_safe_custom_restore_destination(destination):
-            on_line(f"WARNING: Skipping unsafe custom restore destination: {destination}")
+        if not _is_safe_custom_restore_destination(destination, backup_dir):
+            message = f"Skipping unsafe custom restore destination: {destination}"
+            failures.append(message)
+            on_line(f"WARNING: {message}")
             continue
 
         try:
             ensure_dir(destination)
         except OSError as exc:
-            on_line(f"WARNING: Could not create {destination}: {exc}")
+            message = f"Could not create {destination}: {exc}"
+            failures.append(message)
+            on_line(f"WARNING: {message}")
             continue
 
         on_line(f"Restoring {destination}...")
@@ -192,7 +202,7 @@ def restore_custom_folders(
     return copied_total
 
 
-def _is_safe_custom_restore_destination(path: Path) -> bool:
+def _is_safe_custom_restore_destination(path: Path, backup_dir: Path | None = None) -> bool:
     if not path.is_absolute():
         return False
 
@@ -204,21 +214,23 @@ def _is_safe_custom_restore_destination(path: Path) -> bool:
     if resolved.parent == resolved:
         return False
 
-    try:
-        home = user_home().resolve()
-    except OSError:
-        home = user_home()
-    if not (resolved == home or home in resolved.parents):
-        return False
-
     protected_roots = [
         Path(os.environ.get("WINDIR", r"C:\Windows")),
+        Path(os.environ.get("ProgramData", r"C:\ProgramData")),
         Path(os.environ.get("ProgramFiles", r"C:\Program Files")),
         Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")),
     ]
     system_drive = os.environ.get("SystemDrive", "C:")
     if resolved == Path(f"{system_drive}\\"):
         return False
+
+    if backup_dir is not None:
+        try:
+            backup_resolved = backup_dir.resolve()
+        except OSError:
+            backup_resolved = backup_dir
+        if resolved == backup_resolved or backup_resolved in resolved.parents:
+            return False
 
     for root in protected_roots:
         try:
@@ -229,6 +241,23 @@ def _is_safe_custom_restore_destination(path: Path) -> bool:
             return False
 
     return True
+
+
+def _safe_custom_backup_source(custom_root: Path, backup_name: str) -> Path | None:
+    name_path = Path(backup_name)
+    if name_path.is_absolute() or any(part == ".." for part in name_path.parts):
+        return None
+
+    try:
+        root = custom_root.resolve()
+        candidate = (custom_root / name_path).resolve()
+    except OSError:
+        root = custom_root
+        candidate = custom_root / name_path
+
+    if candidate == root or root not in candidate.parents:
+        return None
+    return candidate
 
 
 def _backup_excludes_for_source(source: Path, backup_root: Path) -> list[Path]:
