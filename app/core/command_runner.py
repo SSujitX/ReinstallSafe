@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
+from queue import Empty, Queue
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
@@ -16,6 +17,9 @@ _NO_WINDOW = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDO
 
 # Returned when the user hits Cancel — callers should stop work and not treat as success.
 CANCELLED_RETURN_CODE = -2
+
+# Returned when a command exceeds the caller-provided timeout.
+TIMEOUT_RETURN_CODE = -3
 
 
 @dataclass
@@ -72,48 +76,86 @@ class CommandRunner:
             return CommandResult(args=args, return_code=-1, output_lines=[message])
 
         assert process.stdout is not None
+        output_queue: Queue[str | None] = Queue()
         cancelled = False
+        timed_out = False
 
-        def _watch_cancel() -> None:
-            nonlocal cancelled
-            while process.poll() is None:
-                if self.cancel_event is not None and self.cancel_event.is_set():
-                    cancelled = True
+        def _read_output() -> None:
+            try:
+                assert process.stdout is not None
+                for raw_line in process.stdout:
+                    output_queue.put(raw_line)
+            finally:
+                try:
+                    if process.stdout is not None:
+                        process.stdout.close()
+                except OSError:
+                    pass
+                output_queue.put(None)
+
+        reader = threading.Thread(target=_read_output, daemon=True)
+        reader.start()
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        reader_done = False
+
+        def _kill_process() -> None:
+            if process.poll() is None:
+                try:
                     process.kill()
-                    return
-                time.sleep(0.15)
+                except OSError:
+                    pass
 
-        watcher: threading.Thread | None = None
-        if self.cancel_event is not None:
-            if self.cancel_event.is_set():
-                process.kill()
-                return CommandResult(args=args, return_code=CANCELLED_RETURN_CODE, output_lines=lines)
-            watcher = threading.Thread(target=_watch_cancel, daemon=True)
-            watcher.start()
-
-        for raw_line in process.stdout:
+        while True:
             if self.cancel_event is not None and self.cancel_event.is_set():
                 cancelled = True
-                process.kill()
+                _kill_process()
+
+            if deadline is not None and not timed_out and time.monotonic() >= deadline and process.poll() is None:
+                timed_out = True
+                _kill_process()
+                message = "Command timed out."
+                lines.append(message)
+                if self.on_line:
+                    self.on_line(message)
+
+            try:
+                raw_line = output_queue.get(timeout=0.1)
+            except Empty:
+                raw_line = None
+            else:
+                if raw_line is None:
+                    reader_done = True
+                else:
+                    line = raw_line.rstrip()
+                    if line:
+                        lines.append(line)
+                        if self.on_line:
+                            self.on_line(line)
+
+            if reader_done and process.poll() is not None and output_queue.empty():
                 break
-            line = raw_line.rstrip()
+
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            _kill_process()
+
+        reader.join(timeout=1.0)
+
+        while not output_queue.empty():
+            queued = output_queue.get_nowait()
+            if queued is None:
+                continue
+            line = queued.rstrip()
             if line:
                 lines.append(line)
                 if self.on_line:
                     self.on_line(line)
 
-        if watcher is not None:
-            watcher.join(timeout=1.0)
-            if self.cancel_event is not None and self.cancel_event.is_set():
-                cancelled = True
-
-        try:
-            process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            lines.append("Command timed out.")
-            if self.on_line:
-                self.on_line(lines[-1])
-
-        return_code = CANCELLED_RETURN_CODE if cancelled else (process.returncode or 0)
+        if cancelled:
+            return_code = CANCELLED_RETURN_CODE
+        elif timed_out:
+            return_code = TIMEOUT_RETURN_CODE
+        else:
+            return_code = process.returncode if process.returncode is not None else -1
         return CommandResult(args=args, return_code=return_code, output_lines=lines)
