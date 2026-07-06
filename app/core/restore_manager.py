@@ -116,6 +116,7 @@ class RestoreManager:
                 report.skipped.append(key)
                 return 0
             copied = 0
+            failures: list[str] = []
             folders = manifest.selected_user_folders or list(user_files_locations().keys())
             catalog = user_files_locations()
             for name in folders:
@@ -130,7 +131,14 @@ class RestoreManager:
                 rc = run_robocopy(source, destination, on_line=self.on_line, cancel_event=self.cancel_event)
                 if rc.cancelled:
                     raise RestoreCancelled()
+                if not rc.succeeded:
+                    message = f"{name} restore finished with robocopy code {rc.return_code}."
+                    failures.append(message)
+                    self.on_line(f"WARNING: {message}")
+                    continue
                 copied += rc.copied_files
+            if failures:
+                report.warnings.extend(f"User Files: {failure}" for failure in failures)
             return copied
 
         if key == "custom_folders":
@@ -142,7 +150,7 @@ class RestoreManager:
         if key == "browsers":
             self.on_line(browsers.BROWSER_WARNING)
             keys = options.browser_keys or manifest.detected_browsers
-            counts, cancelled = browsers.restore_browsers(
+            counts, cancelled, failures = browsers.restore_browsers(
                 keys,
                 sub,
                 self.on_line,
@@ -151,6 +159,8 @@ class RestoreManager:
             )
             if cancelled:
                 raise RestoreCancelled()
+            if failures:
+                raise RuntimeError("; ".join(failures))
             return sum(counts.values())
 
         if key == "apps":
@@ -182,7 +192,12 @@ class RestoreManager:
             return fonts.restore_fonts(sub, self.on_line, self.cancel_event)
 
         if key == "registry":
-            return registry.import_registry_exports(sub, self.on_line, self.cancel_event)
+            return registry.import_registry_exports(
+                sub,
+                self.on_line,
+                self.cancel_event,
+                allowed_stems=set(registry.SAFE_REGISTRY_KEYS),
+            )
 
         if key == "windows_settings":
             if not sub.exists():
