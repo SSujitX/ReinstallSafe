@@ -135,6 +135,22 @@ class MainWindow(QMainWindow):
         box.exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        running = (
+            (self.backup_page.worker and self.backup_page.worker.isRunning())
+            or (self.restore_page.worker and self.restore_page.worker.isRunning())
+        )
+        if running:
+            answer = QMessageBox.question(
+                self,
+                "Operation In Progress",
+                "A backup or restore is still running.\n\nCancel and close ReinstallSafe?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            self.backup_page.cancel_if_running()
+            self.restore_page.cancel_if_running()
         self._toasts.clear()
         super().closeEvent(event)
 
