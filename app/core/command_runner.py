@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
+import locale
 from queue import Empty, Queue
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,7 +59,7 @@ class CommandRunner:
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
                 text=True,
-                encoding="oem",
+                encoding=locale.getpreferredencoding(False),
                 errors="replace",
                 bufsize=1,
                 cwd=str(cwd) if cwd else None,
@@ -100,6 +101,19 @@ class CommandRunner:
 
         def _kill_process() -> None:
             if process.poll() is None:
+                if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                    try:
+                        subprocess.run(
+                            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            stdin=subprocess.DEVNULL,
+                            creationflags=_NO_WINDOW,
+                            check=False,
+                        )
+                        return
+                    except OSError:
+                        pass
                 try:
                     process.kill()
                 except OSError:
@@ -136,9 +150,16 @@ class CommandRunner:
                 break
 
         try:
-            process.wait(timeout=2.0)
+            wait_timeout = 0.1 if timeout is None else max(0.1, min(2.0, deadline - time.monotonic())) if deadline else 2.0
+            process.wait(timeout=wait_timeout)
         except subprocess.TimeoutExpired:
             _kill_process()
+            if not timed_out and not cancelled:
+                timed_out = True
+                message = "Command timed out after output closed."
+                lines.append(message)
+                if self.on_line:
+                    self.on_line(message)
 
         reader.join(timeout=1.0)
 
