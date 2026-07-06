@@ -441,6 +441,13 @@ class BackupPage(QWidget):
         self.worker.failed.connect(self._on_backup_failed)
         self.worker.start()
 
+    def cancel_if_running(self, wait_ms: int = 15000) -> bool:
+        """Cooperatively cancel an in-progress backup. Returns True when idle."""
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            return self.worker.wait(wait_ms)
+        return True
+
     def _cancel_backup(self) -> None:
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
