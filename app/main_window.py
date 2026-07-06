@@ -177,7 +177,6 @@ class MainWindow(QMainWindow):
         self._prune_toasts()
         toast = Toast(self, message, kind)
         toast.setParent(self)
-        toast.destroyed.connect(lambda _obj=None: self._prune_toasts())
         toast.show()
         self._toasts.append(toast)
         self._position_toasts()
