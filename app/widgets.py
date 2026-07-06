@@ -152,6 +152,7 @@ class Toast(QWidget):
         super().__init__(parent)
         self.setObjectName("Toast")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setWindowFlags(Qt.WindowType.SubWindow)
         bg, fg, border = self.COLORS.get(kind, self.COLORS["info"])
 
