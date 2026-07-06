@@ -20,7 +20,8 @@ def relaunch_as_admin() -> bool:
     Returns True if a relaunch was triggered (caller should exit), False otherwise.
     """
     try:
-        params = " ".join(f'"{arg}"' for arg in sys.argv)
+        args = sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv
+        params = " ".join(f'"{arg}"' for arg in args)
         result = ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
             None, "runas", sys.executable, params, None, 1
         )
