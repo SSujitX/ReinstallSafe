@@ -41,6 +41,7 @@ _UNINSTALL_PATH = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
 _UNINSTALL_KEYS = [
     ("HKLM\\Uninstall\\64", winreg.HKEY_LOCAL_MACHINE, _UNINSTALL_PATH, winreg.KEY_READ | winreg.KEY_WOW64_64KEY),
     ("HKLM\\Uninstall\\32", winreg.HKEY_LOCAL_MACHINE, _UNINSTALL_PATH, winreg.KEY_READ | winreg.KEY_WOW64_32KEY),
+    ("HKLM\\Uninstall", winreg.HKEY_LOCAL_MACHINE, _UNINSTALL_PATH, winreg.KEY_READ),
     ("HKCU\\Uninstall", winreg.HKEY_CURRENT_USER, _UNINSTALL_PATH, winreg.KEY_READ),
 ]
 
@@ -325,6 +326,10 @@ def _load_winget_package_ids(json_path: Path) -> set[str]:
     return ids
 
 
+def count_winget_packages(json_path: Path) -> int:
+    return len(_load_winget_package_ids(json_path))
+
+
 def _parse_winget_list_map(list_path: Path) -> dict[str, str]:
     """Map normalized display name -> winget package id from apps-list.txt."""
     if not list_path.exists():
@@ -341,12 +346,19 @@ def _parse_winget_list_map(list_path: Path) -> dict[str, str]:
         if not stripped:
             continue
         match = _WINGET_ROW_RE.match(line.rstrip())
-        if not match:
+        if match:
+            name = match.group(1).strip()
+            package_id = match.group(2).strip()
+        else:
+            columns = [part.strip() for part in re.split(r"\s{2,}", line.strip()) if part.strip()]
+            package_index = next((i for i, part in enumerate(columns) if _looks_like_package_id(part)), None)
+            if package_index is None or package_index == 0:
+                continue
+            name = columns[0]
+            package_id = columns[package_index]
+        if not name or not package_id:
             continue
-        name = match.group(1).strip()
-        package_id = match.group(2).strip()
-        if name and package_id:
-            mapping[_normalize_name(name)] = package_id
+        mapping[_normalize_name(name)] = package_id
     return mapping
 
 
@@ -374,6 +386,38 @@ def _normalize_name(name: str) -> str:
 def _is_winget_separator(line: str) -> bool:
     stripped = line.strip()
     return bool(stripped) and "-" in stripped and all(ch == "-" or ch.isspace() for ch in stripped)
+
+
+def _looks_like_package_id(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z0-9._-]+", value))
+
+
+def _looks_like_winget_failure(line: str) -> bool:
+    lowered = line.lower()
+    benign = ("0 failed", "no errors", "0 error", "successfully installed", "successfully imported")
+    if any(phrase in lowered for phrase in benign):
+        return False
+    failure_terms = (
+        "install failed",
+        "failed to install",
+        "installation failed",
+        "returned exit code",
+        "error",
+        "failed",
+        "fehlgeschlagen",
+        "fehler",
+        "échec",
+        "erreur",
+        "falló",
+        "error de",
+        "falha",
+        "erro",
+        "失敗",
+        "失败",
+        "오류",
+        "실패",
+    )
+    return any(term in lowered for term in failure_terms)
 
 
 def _dedupe_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -411,13 +455,7 @@ def import_winget_apps(
 
     def _capture(line: str) -> None:
         on_line(line)
-        lowered = line.lower()
-        if "0 failed" in lowered or "no errors" in lowered or "0 error" in lowered:
-            return
-        if any(
-            phrase in lowered
-            for phrase in ("install failed", "failed to install", "installation failed", "returned exit code")
-        ):
+        if _looks_like_winget_failure(line):
             failed_lines.append(line)
 
     runner = CommandRunner(on_line=_capture, cancel_event=cancel_event)
