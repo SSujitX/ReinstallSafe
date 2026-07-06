@@ -78,7 +78,7 @@ ReinstallSafe organizes everything into a timestamped folder, e.g. `ReinstallSaf
 | **User files** | Desktop, Documents, Downloads, Pictures, Videos, Music — **you choose which folders** |
 | **Custom folders** | Any path you add (e.g. `D:\Projects`) — **original paths saved for restore** |
 | **Browser profiles** | Chrome, Chrome Beta, Edge, Brave, Firefox, Opera, Vivaldi, and **60+ browsers** — extensions and bookmarks; caches skipped |
-| **Installed apps** | `winget export` + registry inventory (CSV list) |
+| **Installed apps** | Full inventory CSV (registry + Store apps): install folder, links, restore method + `winget export` |
 | **AppData** | `%APPDATA%` Roaming settings (not Local AppData) |
 | **Drivers** | Third-party drivers via `pnputil` export |
 | **Wi‑Fi** | Saved wireless profiles and passwords (`netsh`) |
@@ -102,7 +102,7 @@ Every backup writes **`backup_manifest.json`** — a record of what was backed u
 | Browser profiles | ✅ Yes | Install browser first, close it, then restore; use sync for passwords |
 | Wi‑Fi | ✅ Yes | Home networks usually work; corporate Wi‑Fi may need IT |
 | Fonts | ✅ Yes | User fonts re-registered |
-| Apps (winget) | ⚠️ Partial | Only winget packages; check `logs/failed-apps.txt` |
+| Apps (winget) | ⚠️ Partial | winget auto-reinstall only; CSV lists all apps with install paths |
 | AppData | ✅ Yes | Full Restore / Custom only — can overwrite new app defaults |
 | Drivers | ⚠️ Partial | Best run **as Administrator** |
 | Registry | ✅ Yes | Full Restore / Custom only |
