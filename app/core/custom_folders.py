@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.core.manifest import BackupManifest
+from app.core.exceptions import RestoreCancelled
 from app.core.robocopy import run_robocopy
 from app.utils.file_utils import ensure_dir, read_json, write_json
 
@@ -142,7 +143,7 @@ def restore_custom_folders(
     copied_total = 0
     for entry in entries:
         if cancel_event is not None and cancel_event.is_set():
-            break
+            raise RestoreCancelled()
 
         source = custom_root / entry.backup_name
         destination = Path(entry.source_path)
@@ -160,6 +161,8 @@ def restore_custom_folders(
         on_line(f"Restoring {destination}...")
         result = run_robocopy(source, destination, on_line=on_line, cancel_event=cancel_event)
         copied_total += result.copied_files
+        if result.cancelled:
+            raise RestoreCancelled()
         if result.succeeded:
             on_line(f"{destination}: {result.copied_files} files restored.")
         else:
