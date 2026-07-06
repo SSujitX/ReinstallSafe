@@ -8,6 +8,8 @@
 ![License](https://img.shields.io/badge/License-MIT-red?style=for-the-badge)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightblue?style=for-the-badge&logo=windows)
 
+## [![Download](https://img.shields.io/badge/Download-success?style=for-the-badge&logo=download)](https://github.com/SSujitX/ReinstallSafe/releases)
+
 </div>
 
 **ReinstallSafe** is a free Windows backup and restore assistant built for one job: **save everything important before you reset, reinstall, or clean-install Windows** — then bring it back on the new setup.
