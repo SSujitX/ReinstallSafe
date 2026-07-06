@@ -14,6 +14,7 @@ All notable changes to [ReinstallSafe](https://github.com/SSujitX/ReinstallSafe)
 - **Browser restore path** — saves actual backed-up profile path in `browser_profile_paths` manifest field; restore uses saved path when parent exists, otherwise falls back to current install (fixes Opera/Tor Roaming vs Local mismatch and new Windows user paths).
 - **Restore cancel** — cancelled restores no longer show “Restore complete”; `RestoreWorker` emits `cancelled` signal; robocopy cancel and post-category cancel checks stop restore reliably.
 - **Backup page UI** — custom folders panel disabled on load when category is unchecked (matches browsers/user files panels).
+- **Cancel responsiveness** — background thread kills silent subprocesses (reg/winget/netsh) on cancel; registry/Wi-Fi/game/email restore loops stop mid-category; closing the app during backup/restore prompts to cancel first.
 - **winget CSV accuracy** — only marks `winget auto-reinstall` when package is in winget export JSON (no false fuzzy matches).
 - **winget import failures** — tighter failure detection; ignores “0 failed” / “no errors” lines.
 - **Manifest loading** — null/malformed list fields coerced safely; numeric strings parsed.
