@@ -1,5 +1,15 @@
 # ReinstallSafe — Back Up Your PC Before Reinstalling Windows
 
+<div align="center">
+
+![PC Toolkit Pro](https://img.shields.io/badge/ReinstallSafe-v1.0.0-blue?style=for-the-badge&logo=windows)
+![Python](https://img.shields.io/badge/Python-3.11+-green?style=for-the-badge&logo=python)
+![PyQt6](https://img.shields.io/badge/PyQt6-GUI-orange?style=for-the-badge&logo=qt)
+![License](https://img.shields.io/badge/License-MIT-red?style=for-the-badge)
+![Platform](https://img.shields.io/badge/Platform-Windows-lightblue?style=for-the-badge&logo=windows)
+
+</div>
+
 **ReinstallSafe** is a free Windows backup and restore assistant built for one job: **save everything important before you reset, reinstall, or clean-install Windows** — then bring it back on the new setup.
 
 Back up your **Desktop, Documents, Downloads, custom folders, browser profiles (Chrome, Edge, Brave, Firefox, and 60+ others), Wi‑Fi passwords, fonts, app list, drivers, email profiles, game saves, and Windows personalization** to an external drive. After Windows is fresh, run **Safe Restore** or **Full Restore** to recover your data.
