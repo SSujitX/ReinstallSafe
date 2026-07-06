@@ -58,8 +58,8 @@ class MainWindow(QMainWindow):
         self.sidebar_toggle.raise_()
 
         self.logs_page = LogsPage()
-        self.backup_page = BackupPage(toast_callback=self.show_toast)
-        self.restore_page = RestorePage(toast_callback=self.show_toast)
+        self.backup_page = BackupPage(toast_callback=self.show_toast, can_start_callback=self._can_start_operation)
+        self.restore_page = RestorePage(toast_callback=self.show_toast, can_start_callback=self._can_start_operation)
         self.settings_page = SettingsPage(toast_callback=self.show_toast)
         self._toasts: list[Toast] = []
 
@@ -91,6 +91,15 @@ class MainWindow(QMainWindow):
             self.backup_page.refresh_destination_if_empty()
         elif key == "settings":
             self.settings_page.reload_saved_destination()
+
+    def _operation_running(self) -> bool:
+        return bool(
+            (self.backup_page.worker and self.backup_page.worker.isRunning())
+            or (self.restore_page.worker and self.restore_page.worker.isRunning())
+        )
+
+    def _can_start_operation(self) -> bool:
+        return not self._operation_running()
 
     def _on_toggle_sidebar(self) -> None:
         self.sidebar.toggle_collapsed()
@@ -135,10 +144,7 @@ class MainWindow(QMainWindow):
         box.exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        running = (
-            (self.backup_page.worker and self.backup_page.worker.isRunning())
-            or (self.restore_page.worker and self.restore_page.worker.isRunning())
-        )
+        running = self._operation_running()
         if running:
             answer = QMessageBox.question(
                 self,
@@ -149,8 +155,16 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-            self.backup_page.cancel_if_running()
-            self.restore_page.cancel_if_running()
+            backup_stopped = self.backup_page.cancel_if_running()
+            restore_stopped = self.restore_page.cancel_if_running()
+            if not (backup_stopped and restore_stopped):
+                QMessageBox.warning(
+                    self,
+                    "Still Stopping",
+                    "The current operation has not stopped yet. Please wait for cancellation to finish before closing.",
+                )
+                event.ignore()
+                return
         self._toasts.clear()
         super().closeEvent(event)
 
