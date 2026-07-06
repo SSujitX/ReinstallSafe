@@ -10,15 +10,21 @@ from app.core.command_runner import CANCELLED_RETURN_CODE, CommandRunner
 from app.utils.file_utils import ensure_dir
 
 NETSH_TIMEOUT_SECONDS = 2 * 60
+WIFI_SECURITY_NOTICE = "WIFI_PASSWORDS_ARE_CLEARTEXT.txt"
 
 
 def export_wifi_profiles(dest_dir: Path, on_line: Callable[[str], None], cancel_event: threading.Event | None = None) -> int:
     """Export all saved Wi-Fi profiles (with clear-text keys) to XML files."""
     ensure_dir(dest_dir)
+    (dest_dir / WIFI_SECURITY_NOTICE).write_text(
+        "Wi-Fi profile XML files in this folder may contain saved passwords in clear text.\n"
+        "Keep this backup encrypted or physically protected.\n",
+        encoding="utf-8",
+    )
     on_line("Exporting Wi-Fi profiles (including saved passwords)...")
     runner = CommandRunner(on_line=on_line, cancel_event=cancel_event)
     result = runner.run(
-        ["netsh", "wlan", "export", "profile", "key=clear", f"folder={dest_dir}"],
+        ["netsh", "wlan", "export", "profile", "key=clear", f'folder="{dest_dir}"'],
         timeout=NETSH_TIMEOUT_SECONDS,
     )
     if result.return_code == CANCELLED_RETURN_CODE:
@@ -48,7 +54,7 @@ def import_wifi_profiles(source_dir: Path, on_line: Callable[[str], None], cance
             break
         on_line(f"Adding Wi-Fi profile: {xml_file.stem}")
         result = runner.run(
-            ["netsh", "wlan", "add", "profile", f"filename={xml_file}", "user=all"],
+            ["netsh", "wlan", "add", "profile", f'filename="{xml_file}"', "user=all"],
             timeout=NETSH_TIMEOUT_SECONDS,
         )
         if result.return_code == CANCELLED_RETURN_CODE:
