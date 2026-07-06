@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
@@ -72,6 +73,24 @@ class CommandRunner:
 
         assert process.stdout is not None
         cancelled = False
+
+        def _watch_cancel() -> None:
+            nonlocal cancelled
+            while process.poll() is None:
+                if self.cancel_event is not None and self.cancel_event.is_set():
+                    cancelled = True
+                    process.kill()
+                    return
+                time.sleep(0.15)
+
+        watcher: threading.Thread | None = None
+        if self.cancel_event is not None:
+            if self.cancel_event.is_set():
+                process.kill()
+                return CommandResult(args=args, return_code=CANCELLED_RETURN_CODE, output_lines=lines)
+            watcher = threading.Thread(target=_watch_cancel, daemon=True)
+            watcher.start()
+
         for raw_line in process.stdout:
             if self.cancel_event is not None and self.cancel_event.is_set():
                 cancelled = True
@@ -82,6 +101,11 @@ class CommandRunner:
                 lines.append(line)
                 if self.on_line:
                     self.on_line(line)
+
+        if watcher is not None:
+            watcher.join(timeout=1.0)
+            if self.cancel_event is not None and self.cancel_event.is_set():
+                cancelled = True
 
         try:
             process.wait(timeout=timeout)
