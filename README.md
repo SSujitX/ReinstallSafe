@@ -304,3 +304,16 @@ ReinstallSafe_Backup_YYYY-MM-DD_HH-MM-SS/
 ---
 
 **ReinstallSafe** — back up before Windows setup. Restore when you're ready.
+
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=SSujitX%2FReinstallSafe&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=SSujitX/ReinstallSafe&type=date&theme=dark&legend=top-left&sealed_token=1JCUlwnX3meYMwe7L7fxxKjV21YgpEdm069eXYmAgFEMm0eENeNOv5-Gc0MUM4A6o_igSiZLr1xcETMgqt6zZ3IKNV7zh08SbPoeB5FFNGRB-IW3RwYt49_NRdQruGJLUSEBzEklhmKPE6aakCwt7lOJ1EnNIMB9aWvGm57jrCVVT4YVof2d5_xWZCYl" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=SSujitX/ReinstallSafe&type=date&legend=top-left&sealed_token=1JCUlwnX3meYMwe7L7fxxKjV21YgpEdm069eXYmAgFEMm0eENeNOv5-Gc0MUM4A6o_igSiZLr1xcETMgqt6zZ3IKNV7zh08SbPoeB5FFNGRB-IW3RwYt49_NRdQruGJLUSEBzEklhmKPE6aakCwt7lOJ1EnNIMB9aWvGm57jrCVVT4YVof2d5_xWZCYl" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=SSujitX/ReinstallSafe&type=date&legend=top-left&sealed_token=1JCUlwnX3meYMwe7L7fxxKjV21YgpEdm069eXYmAgFEMm0eENeNOv5-Gc0MUM4A6o_igSiZLr1xcETMgqt6zZ3IKNV7zh08SbPoeB5FFNGRB-IW3RwYt49_NRdQruGJLUSEBzEklhmKPE6aakCwt7lOJ1EnNIMB9aWvGm57jrCVVT4YVof2d5_xWZCYl" />
+ </picture>
+</a>
+
+<a href="https://visitorbadge.io/status?path=https%3A%2F%2Fgithub.com%2FSSujitX%2FReinstallSafe"><img src="https://api.visitorbadge.io/api/visitors?path=https%3A%2F%2Fgithub.com%2FSSujitX%2FReinstallSafe&countColor=%23263759" /></a>
