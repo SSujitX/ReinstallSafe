@@ -282,6 +282,15 @@ class RestorePage(QWidget):
             text += f"Custom folders: {paths}{extra}\n"
         if manifest.selected_user_folders:
             text += f"User folders: {', '.join(manifest.selected_user_folders)}\n"
+        if self.backup_dir and manifest.backup_path:
+            try:
+                selected_path = self.backup_dir.resolve()
+                recorded_path = Path(manifest.backup_path).resolve()
+            except OSError:
+                selected_path = self.backup_dir
+                recorded_path = Path(manifest.backup_path)
+            if selected_path != recorded_path:
+                text += "Note: this backup was originally recorded at a different path.\n"
         self.summary_label.setText(text.strip())
 
     def _sync_available_categories(self, manifest: BackupManifest) -> None:
@@ -512,7 +521,14 @@ class RestorePage(QWidget):
         LogBus.instance().warning("Restore cancelled by user.")
         if getattr(report, "report_path", ""):
             self.mini_console.appendPlainText(f"Partial restore report: {report.report_path}")
-        self.toast_callback("Restore was cancelled.", "warning")
+            self.toast_callback("Restore was cancelled. Report saved.", "warning")
+            QMessageBox.information(
+                self,
+                "Restore Cancelled",
+                f"Restore was cancelled.\n\nPartial report saved to:\n{report.report_path}",
+            )
+        else:
+            self.toast_callback("Restore was cancelled.", "warning")
 
     def _on_restore_failed(self, message: str) -> None:
         self._set_running(False)
