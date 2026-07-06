@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 from app.core.robocopy import run_robocopy
 from app.utils.paths import appdata_local, appdata_roaming
@@ -197,10 +197,11 @@ def backup_browsers(
     destination_root: Path,
     on_line: Callable[[str], None],
     cancel_event: threading.Event | None = None,
+    exclude_dirs: Iterable[Path] | None = None,
     on_subprogress: Callable[[float], None] | None = None,
     on_step_begin: Callable[[str], None] | None = None,
     on_step_complete: Callable[[], None] | None = None,
-) -> tuple[dict[str, int], dict[str, str]]:
+) -> tuple[dict[str, int], dict[str, str], list[str]]:
     """Copy each selected browser's profile folder.
 
     Returns (key -> copied file count, key -> backed-up source profile path).
@@ -208,6 +209,7 @@ def backup_browsers(
     detected = detect_browsers()
     results: dict[str, int] = {}
     profile_paths: dict[str, str] = {}
+    failures: list[str] = []
     exclude_args = []
     for name in CACHE_EXCLUDES:
         exclude_args += ["/XD", name]
@@ -242,6 +244,7 @@ def backup_browsers(
             on_line=on_line,
             cancel_event=cancel_event,
             extra_flags=exclude_args,
+            exclude_dirs=exclude_dirs,
             on_subprogress=on_subprogress,
         )
         results[key] = result.copied_files
@@ -252,19 +255,21 @@ def backup_browsers(
         if result.succeeded:
             on_line(f"{browser.label}: {result.copied_files} files backed up.")
         else:
-            on_line(f"WARNING: {browser.label} backup finished with robocopy code {result.return_code}.")
+            message = f"{browser.label} backup finished with robocopy code {result.return_code}."
+            failures.append(message)
+            on_line(f"WARNING: {message}")
 
         if on_step_complete:
             on_step_complete()
 
-    return results, profile_paths
+    return results, profile_paths, failures
 
 
 def _restore_destination(browser: BrowserDefinition, profile_paths: dict[str, str] | None, key: str) -> Path:
     saved = (profile_paths or {}).get(key, "").strip()
     if saved:
         saved_path = Path(saved)
-        if saved_path.parent.exists():
+        if saved_path.parent.exists() and _is_safe_browser_destination(saved_path):
             return saved_path
     active = browser.active_profile_root()
     return active if active is not None else browser.profile_root
@@ -276,11 +281,12 @@ def restore_browsers(
     on_line: Callable[[str], None],
     cancel_event: threading.Event | None = None,
     profile_paths: dict[str, str] | None = None,
-) -> tuple[dict[str, int], bool]:
+) -> tuple[dict[str, int], bool, list[str]]:
     """Restore browser profiles. Returns (key -> file count, cancelled)."""
     definitions = {b.key: b for b in _browser_definitions()}
     results: dict[str, int] = {}
     cancelled = False
+    failures: list[str] = []
 
     for key in selected_keys:
         if cancel_event is not None and cancel_event.is_set():
@@ -305,9 +311,27 @@ def restore_browsers(
         if result.succeeded:
             on_line(f"{browser.label}: {result.copied_files} files restored.")
         else:
-            on_line(f"WARNING: {browser.label} restore finished with robocopy code {result.return_code}.")
+            message = f"{browser.label} restore finished with robocopy code {result.return_code}."
+            failures.append(message)
+            on_line(f"WARNING: {message}")
 
-    return results, cancelled
+    return results, cancelled, failures
+
+
+def _is_safe_browser_destination(path: Path) -> bool:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        resolved = path
+    roots = [appdata_local(), appdata_roaming()]
+    for root in roots:
+        try:
+            root_resolved = root.resolve()
+        except OSError:
+            root_resolved = root
+        if resolved == root_resolved or root_resolved in resolved.parents:
+            return True
+    return False
 
 
 BROWSER_WARNING = (
