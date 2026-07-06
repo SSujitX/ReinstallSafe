@@ -6,9 +6,10 @@ import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 from app.core.command_runner import CANCELLED_RETURN_CODE, CommandRunner
+from app.utils.file_utils import count_files
 from app.utils.log_format import is_verbose_robocopy_line
 
 # Direct copy only — no /Z or /ZB. Those restartable modes write hidden temp
@@ -16,7 +17,6 @@ from app.utils.log_format import is_verbose_robocopy_line
 # the user selected.
 BASE_ROBOCOPY_FLAGS = ["/E", "/MT:32", "/R:1", "/W:1", "/XJ", "/NP"]
 
-_FILES_LINE_RE = re.compile(r"^\s*Files\s*:\s*(?P<total>[\d.]+)\s+(?P<copied>[\d.]+)", re.IGNORECASE)
 _NEW_FILE_RE = re.compile(r"^\s*New File", re.IGNORECASE)
 
 # Robocopy exit codes 0-7 are "success" (bit flags for copied/extra/mismatch); 8+ = failure.
@@ -42,6 +42,7 @@ def run_robocopy(
     on_line: Callable[[str], None] | None = None,
     cancel_event: threading.Event | None = None,
     extra_flags: list[str] | None = None,
+    exclude_dirs: Iterable[Path] | None = None,
     on_subprogress: SubProgressCallback | None = None,
 ) -> RobocopyResult:
     """Copy ``source`` -> ``destination`` using robocopy with no system temp spillover."""
@@ -57,7 +58,8 @@ def run_robocopy(
         )
 
     destination.mkdir(parents=True, exist_ok=True)
-    flags = list(BASE_ROBOCOPY_FLAGS) + (extra_flags or [])
+    before_count = count_files(destination)
+    flags = list(BASE_ROBOCOPY_FLAGS) + _exclude_dir_flags(exclude_dirs) + (extra_flags or [])
     args = ["robocopy", str(source), str(destination), *flags]
 
     lines: list[str] = []
@@ -85,7 +87,10 @@ def run_robocopy(
     cancelled = result.return_code == CANCELLED_RETURN_CODE or (
         cancel_event is not None and cancel_event.is_set()
     )
-    copied = _parse_copied_count(lines)
+    after_count = count_files(destination)
+    # Robocopy localizes summary labels, so filesystem delta is the stable
+    # language-neutral count. Existing overwritten files may not increase it.
+    copied = max(0, after_count - before_count)
     succeeded = not cancelled and 0 <= result.return_code <= ROBOCOPY_SUCCESS_MAX
 
     if on_subprogress and not cancelled:
@@ -101,13 +106,17 @@ def run_robocopy(
         output_tail=lines[-15:],
     )
 
-
-def _parse_copied_count(lines: list[str]) -> int:
-    for line in lines:
-        match = _FILES_LINE_RE.match(line)
-        if match:
-            try:
-                return int(float(match.group("copied")))
-            except ValueError:
-                return 0
-    return 0
+def _exclude_dir_flags(paths: Iterable[Path] | None) -> list[str]:
+    flags: list[str] = []
+    seen: set[str] = set()
+    for path in paths or ():
+        try:
+            resolved = str(path.resolve())
+        except OSError:
+            resolved = str(path)
+        normalized = resolved.casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        flags += ["/XD", resolved]
+    return flags
