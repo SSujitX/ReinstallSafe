@@ -9,18 +9,28 @@ from typing import Callable
 from app.core.command_runner import CANCELLED_RETURN_CODE, CommandRunner
 from app.utils.file_utils import ensure_dir
 
+NETSH_TIMEOUT_SECONDS = 2 * 60
+
 
 def export_wifi_profiles(dest_dir: Path, on_line: Callable[[str], None], cancel_event: threading.Event | None = None) -> int:
     """Export all saved Wi-Fi profiles (with clear-text keys) to XML files."""
     ensure_dir(dest_dir)
     on_line("Exporting Wi-Fi profiles (including saved passwords)...")
     runner = CommandRunner(on_line=on_line, cancel_event=cancel_event)
-    result = runner.run(["netsh", "wlan", "export", "profile", "key=clear", f"folder={dest_dir}"])
+    result = runner.run(
+        ["netsh", "wlan", "export", "profile", "key=clear", f"folder={dest_dir}"],
+        timeout=NETSH_TIMEOUT_SECONDS,
+    )
     if result.return_code == CANCELLED_RETURN_CODE:
         on_line("Wi-Fi export cancelled.")
         return 0
 
     exported = len(list(dest_dir.glob("*.xml"))) if dest_dir.exists() else 0
+    if not result.succeeded:
+        if exported == 0:
+            on_line("No Wi-Fi profiles exported. This PC may not have Wi-Fi hardware or WLAN AutoConfig may be disabled.")
+            return 0
+        on_line(f"WARNING: Wi-Fi export finished with netsh code {result.return_code}; exported {exported} profile(s).")
     on_line(f"Exported {exported} Wi-Fi profile(s).")
     return exported
 
@@ -37,10 +47,15 @@ def import_wifi_profiles(source_dir: Path, on_line: Callable[[str], None], cance
         if cancel_event is not None and cancel_event.is_set():
             break
         on_line(f"Adding Wi-Fi profile: {xml_file.stem}")
-        result = runner.run(["netsh", "wlan", "add", "profile", f"filename={xml_file}", "user=all"])
+        result = runner.run(
+            ["netsh", "wlan", "add", "profile", f"filename={xml_file}", "user=all"],
+            timeout=NETSH_TIMEOUT_SECONDS,
+        )
         if result.return_code == CANCELLED_RETURN_CODE:
             break
         if result.succeeded:
             imported += 1
+        else:
+            on_line(f"WARNING: Wi-Fi profile import failed for {xml_file.name} with netsh code {result.return_code}; continuing.")
     on_line(f"Restored {imported} Wi-Fi profile(s).")
     return imported
