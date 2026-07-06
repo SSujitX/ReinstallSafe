@@ -175,7 +175,9 @@ class BackupManager:
 
             self._progress.finalize()
             self.manifest.copied_file_count = sum(
-                c.get("file_count", 0) for c in self.manifest.categories.values()
+                c.get("file_count", 0)
+                for key, c in self.manifest.categories.items()
+                if key in FILE_BACKUP_CATEGORIES
             )
             manifest_path = self.manifest.save(backup_dir)
             self._write_session_log(backup_dir)
@@ -185,7 +187,7 @@ class BackupManager:
     def _count_work_units(self, steps: list[tuple[str, str]], options: BackupOptions) -> int:
         total = 0
         detected = browsers.detect_browsers()
-        browser_keys = options.browser_keys or list(detected.keys())
+        browser_keys = options.browser_keys if options.browser_keys else []
         user_file_keys = options.user_file_keys or list(user_files_locations().keys())
 
         for key, _label in steps:
@@ -289,7 +291,7 @@ class BackupManager:
             detected = browsers.detect_browsers()
             self.manifest.detected_browsers = list(detected.keys())
             counts, profile_paths, failures = browsers.backup_browsers(
-                options.browser_keys or list(detected.keys()),
+                options.browser_keys,
                 sub,
                 self.on_line,
                 self.cancel_event,
@@ -346,12 +348,17 @@ class BackupManager:
         elif key == "appdata":
             if progress:
                 progress.begin(f"Backing up: {label}")
-            result.file_count = appdata.backup_appdata(
+            count, warnings = appdata.backup_appdata(
                 sub,
                 self.on_line,
                 self.cancel_event,
                 exclude_dirs=_backup_excludes_for(appdata.appdata_roaming(), backup_dir),
             )
+            result.file_count = count
+            if warnings:
+                result.succeeded = False
+                for warning in warnings:
+                    self.manifest.add_warning(f"{label}: {warning}")
             if self._cancelled():
                 raise BackupCancelled(self._backup_dir)
             if progress:
@@ -382,12 +389,17 @@ class BackupManager:
         elif key == "fonts":
             if progress:
                 progress.begin(f"Backing up: {label}")
-            result.file_count = fonts.backup_fonts(
+            count, warnings = fonts.backup_fonts(
                 sub,
                 self.on_line,
                 self.cancel_event,
                 exclude_dirs=_backup_excludes_for(fonts.user_fonts_dir(), backup_dir),
             )
+            result.file_count = count
+            if warnings:
+                result.succeeded = False
+                for warning in warnings:
+                    self.manifest.add_warning(f"{label}: {warning}")
             if self._cancelled():
                 raise BackupCancelled(self._backup_dir)
             if progress:
@@ -407,7 +419,9 @@ class BackupManager:
         elif key == "printers":
             if progress:
                 progress.begin(f"Backing up: {label}")
-            result.file_count = detectors.export_printers(sub, _activity_logger("Collecting printers..."))
+            result.file_count = detectors.export_printers(
+                sub, _activity_logger("Collecting printers..."), self.cancel_event
+            )
             if progress:
                 progress.complete_step()
 
@@ -425,12 +439,17 @@ class BackupManager:
         elif key == "games":
             if progress:
                 progress.begin(f"Backing up: {label}")
-            result.file_count = detectors.backup_game_saves(
+            count, warnings = detectors.backup_game_saves(
                 sub,
                 self.on_line,
                 self.cancel_event,
                 exclude_dirs=[backup_dir],
             )
+            result.file_count = count
+            if warnings:
+                result.succeeded = False
+                for warning in warnings:
+                    self.manifest.add_warning(f"{label}: {warning}")
             if self._cancelled():
                 raise BackupCancelled(self._backup_dir)
             if progress:
@@ -440,12 +459,17 @@ class BackupManager:
             if progress:
                 progress.begin(f"Backing up: {label}")
             self.on_line("Note: Outlook/Thunderbird must be closed for a consistent copy.")
-            result.file_count = detectors.backup_email_profiles(
+            count, warnings = detectors.backup_email_profiles(
                 sub,
                 self.on_line,
                 self.cancel_event,
                 exclude_dirs=[backup_dir],
             )
+            result.file_count = count
+            if warnings:
+                result.succeeded = False
+                for warning in warnings:
+                    self.manifest.add_warning(f"{label}: {warning}")
             if self._cancelled():
                 raise BackupCancelled(self._backup_dir)
             if progress:
@@ -459,8 +483,29 @@ class BackupManager:
         self.on_line(f"Finished: {label} ({result.file_count} item(s)).")
 
     def _write_session_log(self, backup_dir: Path) -> None:
-        # Placeholder hook: the Logs page/worker persists the full live log separately.
-        pass
+        logs_dir = ensure_dir(backup_dir / "logs")
+        lines = [
+            "ReinstallSafe Backup Summary",
+            f"Backup folder: {backup_dir}",
+            f"Computer: {self.manifest.computer_name}",
+            f"User: {self.manifest.username}",
+            f"Windows: {self.manifest.windows_version}",
+            f"Date: {self.manifest.backup_date}",
+            "",
+            "Categories:",
+        ]
+        for key, info in self.manifest.categories.items():
+            state = "OK" if info.get("succeeded", True) else "PARTIAL/FAILED"
+            lines.append(f"  - {key}: {state}, {info.get('file_count', 0)} item(s)")
+        if self.manifest.warnings:
+            lines.append("")
+            lines.append("Warnings:")
+            lines.extend(f"  - {warning}" for warning in self.manifest.warnings)
+        if self.manifest.errors:
+            lines.append("")
+            lines.append("Errors:")
+            lines.extend(f"  - {error}" for error in self.manifest.errors)
+        (logs_dir / "backup_session_summary.txt").write_text("\n".join(lines), encoding="utf-8")
 
     def _record_failed_category(self, key: str, label: str, backup_dir: Path, detail: str) -> None:
         sub = backup_dir / SUBFOLDERS.get(key, key)
