@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import threading
+import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 from app.core.manifest import BackupManifest
 from app.core.exceptions import RestoreCancelled
 from app.core.robocopy import run_robocopy
 from app.utils.file_utils import ensure_dir, read_json, write_json
+from app.utils.paths import BACKUP_FOLDER_PREFIX, user_home
 
 FOLDER_MAP_FILENAME = "folder_map.json"
 
@@ -45,18 +47,21 @@ def backup_custom_folders(
     destination_root: Path,
     on_line: Callable[[str], None],
     cancel_event: threading.Event | None = None,
+    exclude_dirs: Iterable[Path] | None = None,
+    backup_root: Path | None = None,
     on_subprogress: Callable[[float], None] | None = None,
     on_step_begin: Callable[[str], None] | None = None,
     on_step_complete: Callable[[], None] | None = None,
-) -> tuple[int, list[CustomFolderEntry]]:
+) -> tuple[int, list[CustomFolderEntry], list[str]]:
     """Copy custom folders into the backup tree. Returns (file_count, path map)."""
     ensure_dir(destination_root)
     entries: list[CustomFolderEntry] = []
+    failures: list[str] = []
     used_names: set[str] = set()
     copied_total = 0
 
     if not folders:
-        return 0, entries
+        return 0, entries, failures
 
     for folder in folders:
         if cancel_event is not None and cancel_event.is_set():
@@ -78,11 +83,16 @@ def backup_custom_folders(
             on_step_begin(detail)
         on_line(detail)
 
+        source_excludes = list(exclude_dirs or [])
+        if backup_root is not None:
+            source_excludes.extend(_backup_excludes_for_source(resolved, backup_root))
+
         result = run_robocopy(
             resolved,
             destination_root / backup_name,
             on_line=on_line,
             cancel_event=cancel_event,
+            exclude_dirs=source_excludes,
             on_subprogress=on_subprogress,
         )
         copied_total += result.copied_files
@@ -91,7 +101,9 @@ def backup_custom_folders(
         if result.succeeded:
             on_line(f"{resolved}: {result.copied_files} files backed up.")
         else:
-            on_line(f"WARNING: {resolved} backup finished with robocopy code {result.return_code}.")
+            message = f"{resolved} backup finished with robocopy code {result.return_code}."
+            failures.append(message)
+            on_line(f"WARNING: {message}")
         if on_step_complete:
             on_step_complete()
 
@@ -99,7 +111,7 @@ def backup_custom_folders(
         write_json(destination_root / FOLDER_MAP_FILENAME, [e.to_dict() for e in entries])
         on_line(f"Saved path map for {len(entries)} custom folder(s).")
 
-    return copied_total, entries
+    return copied_total, entries, failures
 
 
 def load_custom_folder_entries(backup_dir: Path, manifest: BackupManifest) -> list[CustomFolderEntry]:
@@ -141,6 +153,7 @@ def restore_custom_folders(
         return 0
 
     copied_total = 0
+    failures: list[str] = []
     for entry in entries:
         if cancel_event is not None and cancel_event.is_set():
             raise RestoreCancelled()
@@ -150,6 +163,10 @@ def restore_custom_folders(
 
         if not source.exists():
             on_line(f"Skipping {destination}: no backed-up data at '{entry.backup_name}'.")
+            continue
+
+        if not _is_safe_custom_restore_destination(destination):
+            on_line(f"WARNING: Skipping unsafe custom restore destination: {destination}")
             continue
 
         try:
@@ -166,6 +183,72 @@ def restore_custom_folders(
         if result.succeeded:
             on_line(f"{destination}: {result.copied_files} files restored.")
         else:
-            on_line(f"WARNING: {destination} restore finished with robocopy code {result.return_code}.")
+            message = f"{destination} restore finished with robocopy code {result.return_code}."
+            failures.append(message)
+            on_line(f"WARNING: {message}")
 
+    if failures:
+        raise RuntimeError("; ".join(failures))
     return copied_total
+
+
+def _is_safe_custom_restore_destination(path: Path) -> bool:
+    if not path.is_absolute():
+        return False
+
+    try:
+        resolved = path.resolve()
+    except OSError:
+        resolved = path
+
+    if resolved.parent == resolved:
+        return False
+
+    try:
+        home = user_home().resolve()
+    except OSError:
+        home = user_home()
+    if not (resolved == home or home in resolved.parents):
+        return False
+
+    protected_roots = [
+        Path(os.environ.get("WINDIR", r"C:\Windows")),
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")),
+        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")),
+    ]
+    system_drive = os.environ.get("SystemDrive", "C:")
+    if resolved == Path(f"{system_drive}\\"):
+        return False
+
+    for root in protected_roots:
+        try:
+            root_resolved = root.resolve()
+        except OSError:
+            root_resolved = root
+        if resolved == root_resolved or root_resolved in resolved.parents:
+            return False
+
+    return True
+
+
+def _backup_excludes_for_source(source: Path, backup_root: Path) -> list[Path]:
+    try:
+        source_resolved = source.resolve()
+        backup_resolved = backup_root.resolve()
+    except OSError:
+        return []
+
+    candidates = [backup_resolved]
+    parent = backup_resolved.parent
+    if parent.exists():
+        candidates.extend(path.resolve() for path in parent.glob(f"{BACKUP_FOLDER_PREFIX}_*") if path.is_dir())
+
+    excludes: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate == source_resolved or source_resolved in candidate.parents:
+            key = str(candidate).casefold()
+            if key not in seen:
+                seen.add(key)
+                excludes.append(candidate)
+    return excludes
