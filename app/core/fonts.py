@@ -22,17 +22,20 @@ def backup_fonts(
     on_line: Callable[[str], None],
     cancel_event: threading.Event | None = None,
     exclude_dirs: Iterable[Path] | None = None,
-) -> int:
+) -> tuple[int, list[str]]:
     source = user_fonts_dir()
     if not source.exists():
         on_line("No user-installed fonts folder found; skipping.")
-        return 0
+        return 0, []
     on_line("Backing up user-installed fonts...")
     result = run_robocopy(source, dest_dir, on_line=on_line, cancel_event=cancel_event, exclude_dirs=exclude_dirs)
+    warnings: list[str] = []
     if not result.cancelled and not result.succeeded:
-        on_line(f"WARNING: Fonts backup finished with robocopy code {result.return_code}; some files may be skipped.")
+        warning = f"Fonts backup finished with robocopy code {result.return_code}; some files may be skipped."
+        warnings.append(warning)
+        on_line(f"WARNING: {warning}")
     on_line(f"Fonts backed up: {result.copied_files} file(s).")
-    return result.copied_files
+    return result.copied_files, warnings
 
 
 def restore_fonts(source_dir: Path, on_line: Callable[[str], None], cancel_event: threading.Event | None = None) -> int:
@@ -52,7 +55,9 @@ def restore_fonts(source_dir: Path, on_line: Callable[[str], None], cancel_event
             for font_file in dest.glob("*.*"):
                 if font_file.suffix.lower() not in (".ttf", ".otf", ".ttc"):
                     continue
-                display_name = f"{font_file.stem} (TrueType)"
+                suffix = font_file.suffix.lower()
+                font_kind = "OpenType" if suffix == ".otf" else "TrueType Collection" if suffix == ".ttc" else "TrueType"
+                display_name = f"{font_file.stem} ({font_kind})"
                 try:
                     winreg.SetValueEx(key, display_name, 0, winreg.REG_SZ, str(font_file))
                     registered += 1
