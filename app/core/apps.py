@@ -12,13 +12,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from app.core.command_runner import CommandRunner
+from app.core.command_runner import CANCELLED_RETURN_CODE, CommandRunner
 from app.utils.file_utils import ensure_dir, read_json
 
 WINGET_JSON_NAME = "winget-apps.json"
 WINGET_LIST_NAME = "apps-list.txt"
 REGISTRY_CSV_NAME = "installed-programs.csv"
 FAILED_APPS_NAME = "failed-apps.txt"
+
+WINGET_TIMEOUT_SECONDS = 20 * 60
+APPX_SCAN_TIMEOUT_SECONDS = 2 * 60
 
 CSV_FIELDS = [
     "DisplayName",
@@ -34,15 +37,20 @@ CSV_FIELDS = [
     "WingetPackageId",
 ]
 
+_UNINSTALL_PATH = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
 _UNINSTALL_KEYS = [
-    ("HKLM\\Uninstall", winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-    ("HKLM\\Uninstall\\WOW6432", winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
-    ("HKCU\\Uninstall", winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ("HKLM\\Uninstall\\64", winreg.HKEY_LOCAL_MACHINE, _UNINSTALL_PATH, winreg.KEY_READ | winreg.KEY_WOW64_64KEY),
+    ("HKLM\\Uninstall\\32", winreg.HKEY_LOCAL_MACHINE, _UNINSTALL_PATH, winreg.KEY_READ | winreg.KEY_WOW64_32KEY),
+    ("HKCU\\Uninstall", winreg.HKEY_CURRENT_USER, _UNINSTALL_PATH, winreg.KEY_READ),
 ]
 
 # winget list table: Name ... Id ... Version ...
 _WINGET_ROW_RE = re.compile(r"^(.+?)\s{2,}([A-Za-z0-9][A-Za-z0-9._-]*)\s+(\S+)?")
-_EXE_PATH_RE = re.compile(r'"([^"]+\.(?:exe|msi))"|([A-Za-z]:\\[^\s"]+\.(?:exe|msi))', re.IGNORECASE)
+_QUOTED_EXE_PATH_RE = re.compile(r'"([^"]+\.(?:exe|msi))"', re.IGNORECASE)
+_UNQUOTED_EXE_PATH_RE = re.compile(
+    r"([A-Za-z]:\\[^\r\n\"]+?\.(?:exe|msi))(?=$|\s+[/-]|\s+[A-Za-z]+=|,)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -67,7 +75,7 @@ def export_winget_apps(dest_dir: Path, on_line: Callable[[str], None], cancel_ev
     result = runner.run([
         "winget", "export", "-o", str(target),
         "--accept-source-agreements", "--include-versions",
-    ])
+    ], timeout=WINGET_TIMEOUT_SECONDS)
     if result.succeeded and target.exists():
         on_line(f"winget export saved to {target.name}")
         return True
@@ -82,16 +90,23 @@ def export_winget_list_txt(dest_dir: Path, on_line: Callable[[str], None], cance
     on_line("Collecting readable winget app list...")
     lines: list[str] = []
     runner = CommandRunner(on_line=lambda line: (lines.append(line), on_line(line)), cancel_event=cancel_event)
-    runner.run(["winget", "list", "--accept-source-agreements"])
+    result = runner.run(["winget", "list", "--accept-source-agreements"], timeout=WINGET_TIMEOUT_SECONDS)
     target.write_text("\n".join(lines), encoding="utf-8")
+    if not result.succeeded:
+        on_line(f"WARNING: winget list exited with code {result.return_code}.")
+        return 0
 
-    separator_idx = next((i for i, line in enumerate(lines) if set(line.strip()) == {"-"}), None)
+    separator_idx = next((i for i, line in enumerate(lines) if _is_winget_separator(line)), None)
     if separator_idx is None:
         return 0
-    return max(0, len(lines) - separator_idx - 1)
+    return sum(1 for line in lines[separator_idx + 1 :] if line.strip())
 
 
-def scan_registry_installed_programs(dest_dir: Path, on_line: Callable[[str], None]) -> int:
+def scan_registry_installed_programs(
+    dest_dir: Path,
+    on_line: Callable[[str], None],
+    cancel_event: threading.Event | None = None,
+) -> int:
     """Build a comprehensive installed-software CSV (registry + Store/UWP apps)."""
     ensure_dir(dest_dir)
     target = dest_dir / REGISTRY_CSV_NAME
@@ -101,8 +116,12 @@ def scan_registry_installed_programs(dest_dir: Path, on_line: Callable[[str], No
     winget_ids = _load_winget_package_ids(dest_dir / WINGET_JSON_NAME)
 
     rows: list[dict[str, str]] = []
-    rows.extend(_scan_registry_rows(on_line))
-    rows.extend(_scan_appx_rows(on_line))
+    rows.extend(_scan_registry_rows(on_line, cancel_event))
+    if cancel_event is not None and cancel_event.is_set():
+        return 0
+    rows.extend(_scan_appx_rows(on_line, cancel_event))
+    if cancel_event is not None and cancel_event.is_set():
+        return 0
     rows = _dedupe_rows(rows)
     _apply_winget_restore_info(rows, winget_by_name, winget_ids)
 
@@ -122,18 +141,29 @@ def scan_registry_installed_programs(dest_dir: Path, on_line: Callable[[str], No
     return len(rows)
 
 
-def _scan_registry_rows(on_line: Callable[[str], None]) -> list[dict[str, str]]:
+def _scan_registry_rows(
+    on_line: Callable[[str], None],
+    cancel_event: threading.Event | None = None,
+) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
-    for source_label, hive, key_path in _UNINSTALL_KEYS:
+    seen_keys: set[tuple[str, str]] = set()
+    for source_label, hive, key_path, access in _UNINSTALL_KEYS:
+        if cancel_event is not None and cancel_event.is_set():
+            break
         try:
-            with winreg.OpenKey(hive, key_path) as base_key:
+            with winreg.OpenKey(hive, key_path, 0, access) as base_key:
                 for i in range(winreg.QueryInfoKey(base_key)[0]):
+                    if cancel_event is not None and cancel_event.is_set():
+                        break
                     sub_name = winreg.EnumKey(base_key, i)
                     try:
                         with winreg.OpenKey(base_key, sub_name) as sub_key:
                             row = _read_program_entry(sub_key, source_label)
                             if row:
-                                rows.append(row)
+                                key = (_normalize_name(row.get("DisplayName", "")), row.get("InstallDirectory", "").lower())
+                                if key not in seen_keys:
+                                    seen_keys.add(key)
+                                    rows.append(row)
                     except OSError:
                         continue
         except OSError:
@@ -142,7 +172,10 @@ def _scan_registry_rows(on_line: Callable[[str], None]) -> list[dict[str, str]]:
     return rows
 
 
-def _scan_appx_rows(on_line: Callable[[str], None]) -> list[dict[str, str]]:
+def _scan_appx_rows(
+    on_line: Callable[[str], None],
+    cancel_event: threading.Event | None = None,
+) -> list[dict[str, str]]:
     """Microsoft Store / UWP packages via PowerShell Get-AppxPackage."""
     on_line("Scanning Microsoft Store / UWP apps (Get-AppxPackage)...")
     script = (
@@ -150,8 +183,10 @@ def _scan_appx_rows(on_line: Callable[[str], None]) -> list[dict[str, str]]:
         "| Select-Object Name, Version, Publisher, InstallLocation "
         "| ConvertTo-Json -Compress"
     )
-    runner = CommandRunner(on_line=lambda _: None)
-    result = runner.run(["powershell", "-NoProfile", "-Command", script])
+    runner = CommandRunner(on_line=lambda _: None, cancel_event=cancel_event)
+    result = runner.run(["powershell", "-NoProfile", "-Command", script], timeout=APPX_SCAN_TIMEOUT_SECONDS)
+    if result.return_code == CANCELLED_RETURN_CODE:
+        return []
     if not result.succeeded or not result.output.strip():
         on_line("WARNING: Could not enumerate Store/UWP apps.")
         return []
@@ -165,6 +200,8 @@ def _scan_appx_rows(on_line: Callable[[str], None]) -> list[dict[str, str]]:
     items = payload if isinstance(payload, list) else [payload]
     rows: list[dict[str, str]] = []
     for item in items:
+        if cancel_event is not None and cancel_event.is_set():
+            break
         name = str(item.get("Name", "")).strip()
         if not name:
             continue
@@ -254,10 +291,13 @@ def _resolve_install_directory(
 def _extract_path_from_command(command: str) -> str:
     if not command:
         return ""
-    match = _EXE_PATH_RE.search(command)
+    match = _QUOTED_EXE_PATH_RE.search(command)
+    if match:
+        return match.group(1).strip()
+    match = _UNQUOTED_EXE_PATH_RE.search(command)
     if not match:
         return ""
-    return (match.group(1) or match.group(2) or "").strip()
+    return match.group(1).strip()
 
 
 def _default_restore_method(install_dir: str, uninstall: str, help_link: str, info_url: str) -> str:
@@ -291,7 +331,7 @@ def _parse_winget_list_map(list_path: Path) -> dict[str, str]:
         return {}
 
     lines = list_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    separator_idx = next((i for i, line in enumerate(lines) if set(line.strip()) == {"-"}), None)
+    separator_idx = next((i for i, line in enumerate(lines) if _is_winget_separator(line)), None)
     if separator_idx is None:
         return {}
 
@@ -329,6 +369,11 @@ def _apply_winget_restore_info(
 
 def _normalize_name(name: str) -> str:
     return re.sub(r"\s+", " ", name.strip().lower())
+
+
+def _is_winget_separator(line: str) -> bool:
+    stripped = line.strip()
+    return bool(stripped) and "-" in stripped and all(ch == "-" or ch.isspace() for ch in stripped)
 
 
 def _dedupe_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -379,7 +424,9 @@ def import_winget_apps(
     result = runner.run([
         "winget", "import", "-i", str(winget_json_path),
         "--accept-package-agreements", "--accept-source-agreements", "--ignore-unavailable",
-    ])
+    ], timeout=WINGET_TIMEOUT_SECONDS)
     if not result.succeeded and not (cancel_event and cancel_event.is_set()):
+        if not failed_lines:
+            failed_lines.extend(result.output_lines[-10:])
         failed_lines.append(f"winget import exited with code {result.return_code}")
     return failed_lines
