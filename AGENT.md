@@ -157,7 +157,7 @@ Category labels and honest UI notes live in **`app/core/category_info.py`**.
 | File | Purpose |
 |------|---------|
 | `backup_worker.py` | `QThread` wrapping `BackupManager`. `cancel_event` for cooperative cancel. Signals: `log_line`, `progress`, `finished_ok`, `cancelled`, `failed`. |
-| `restore_worker.py` | Same pattern for `RestoreManager`. |
+| `restore_worker.py` | `QThread` wrapping `RestoreManager`. Signals: `finished_ok`, `cancelled`, `failed`. |
 
 ### `app/core/` — business logic (no UI)
 
@@ -165,13 +165,13 @@ Category labels and honest UI notes live in **`app/core/category_info.py`**.
 |------|---------|
 | `backup_manager.py` | **Backup orchestrator.** `ALL_CATEGORIES`, `BackupOptions`, `ProgressTracker`, `BackupManager.run()`. Loops categories, calls module functions, fills manifest. |
 | `restore_manager.py` | **Restore orchestrator.** `RESTORE_CATEGORIES`, `RISKY_CATEGORIES`, `RestoreOptions`, `RestoreReport`, `RestoreManager.run()`. |
-| `manifest.py` | `BackupManifest` + `CategoryResult` dataclasses. JSON save/load. Fields: `selected_user_folders`, `custom_folders`, `detected_browsers`, counts, warnings/errors. |
+| `manifest.py` | `BackupManifest` + `CategoryResult`. Fields: `selected_user_folders`, `custom_folders`, `detected_browsers`, `browser_profile_paths`, counts, warnings/errors. `from_dict()` coerces null/malformed JSON safely. `load(backup_dir)` reads `backup_manifest.json`. |
 | `category_info.py` | UI copy: backup/restore card subtitles, preflight warning text builders. Single source of honest expectations. |
 | `custom_folders.py` | Backup custom paths with `folder_map.json` + manifest entries. Restore to **original source paths**. Handles name collisions (`Projects_2`). |
-| `browsers.py` | 65+ `BrowserDefinition`s (Chrome/Beta/Dev/Canary, Edge channels, Brave, Firefox family, Opera, Chromium forks, security browsers). `detect_browsers()`, `backup_browsers()`, `restore_browsers()`, `close_browsers_prompt()`. Dedupes same profile path. |
+| `browsers.py` | 65+ browsers. Backup saves `browser_profile_paths` in manifest. Restore uses saved path when parent exists, else `active_profile_root()` / `profile_root`. |
 | `robocopy.py` | Wrapper around Windows `robocopy`. Flags: `/E /MT:32 /R:1 /W:1 /XJ`. Exit codes 0–7 = success. Supports cancel + sub-progress callbacks. |
 | `command_runner.py` | Generic subprocess runner with live stdout lines + cancel. Used by reg, pnputil, netsh, winget. |
-| `apps.py` | `winget export/import`, `winget list` txt, registry uninstall scan → CSV. |
+| `apps.py` | `winget export/import`, full `installed-programs.csv` (registry + AppX, install dir, links, RestoreMethod), `apps-list.txt`. |
 | `appdata.py` | Backup/restore `%APPDATA%` Roaming only (excludes Temp, caches). |
 | `drivers.py` | `pnputil /export-driver` and `/add-driver … /install`. |
 | `wifi.py` | `netsh wlan export profile key=clear` and `netsh wlan add profile`. |
@@ -224,6 +224,7 @@ Written to `<backup>/backup_manifest.json`. Critical fields for restore:
 - `selected_user_folders` — e.g. `["Desktop", "Documents"]`
 - `custom_folders` — `[{"source_path": "D:\\Projects", "backup_name": "Projects"}]`
 - `detected_browsers` — e.g. `["chrome", "chrome_beta", "edge"]`
+- `browser_profile_paths` — e.g. `{"chrome": "C:\\Users\\...\\User Data"}` (exact path backed up)
 - `categories` — per-category file counts and detail strings
 
 ### Custom folder mapping
@@ -295,6 +296,10 @@ Recent major work in this repo:
 10. **Path normalization** — `normalize_backup_destination()` prevents `D:` landing on C:.
 11. **TEMP redirect** — `backup_workspace.py` keeps working files inside backup folder.
 12. **README** — SEO user-facing docs; `AGENT.md` for developers/agents.
+13. **Software inventory CSV** — registry + AppX scan, install paths, links, `RestoreMethod` column.
+14. **Restore audit fixes** — `BackupManifest.load()` restored; post-category cancel checks; browser path fallback on new Windows user; winget CSV accuracy; restore cancel UI signal.
+
+**Not bug-free:** no automated test suite. Remaining known gaps: printers backup-only; long registry/AppX scan ignores cancel during apps backup; winget name matching is exact only; browser passwords may still fail after clean install (DPAPI).
 
 ---
 
